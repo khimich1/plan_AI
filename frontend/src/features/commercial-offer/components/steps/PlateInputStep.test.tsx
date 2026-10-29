@@ -4,6 +4,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { PlateInputStep } from "@/features/commercial-offer/components/steps/PlateInputStep";
 import { useSourceTextLint } from "@/features/commercial-offer/hooks/useSourceTextLint";
 import { OCR_VERIFY_FAILED_REVIEW_MESSAGE } from "@/features/commercial-offer/lib/ocrVerifyFailed";
+import { TEXT_REVIEW_SLOT_PAGE_ID } from "@/features/commercial-offer/lib/widePlateSlots";
 import type { CommercialDraftDetails } from "@/features/commercial-offer/types/commercialOffer";
 import type { PageSource } from "@/features/commercial-offer/lib/multiPageSource";
 
@@ -775,6 +776,30 @@ describe("PlateInputStep two-screen width gates", () => {
     expect(screen.getByRole("button", { name: "Готово, далее" })).toBeDisabled();
   });
 
+  it("shows the wide card on a photo whose known marks are not applied yet", () => {
+    const draft = makeDraft("ПБ 56-15-8 20");
+    draft.metadata.wide_plate_lines = [{ id: "wide-1", line: "ПБ 56-15-8 20", qty: 20 }];
+    draft.metadata.wide_plates_resolved = true;
+
+    render(
+      <PlateInputStep
+        {...screenProps}
+        pendingBatchReview={false}
+        draft={draft}
+        batchReviewText="ПБ 56-15-8 20"
+        normalizedText="ПБ 56-15-8 20"
+        reopenKnownWideLines
+      />,
+    );
+
+    expect(screen.getByText("Нестандартная ширина")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: /позиций требуют внимания/ }));
+    expect(screen.getByRole("radio", { name: "Подтвердить" })).toBeChecked();
+    expect(screen.getByRole("radio", { name: "Заменить" })).toBeInTheDocument();
+    expect(screen.getByRole("radio", { name: "Исключить" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Готово, далее" })).toBeDisabled();
+  });
+
   it("keeps Готово, далее disabled when the screen still shows a wide mark", () => {
     const draft = makeDraft("ПБ 60-12-8 2");
     draft.metadata.wide_plate_lines = [];
@@ -812,6 +837,66 @@ describe("PlateInputStep two-screen width gates", () => {
     );
 
     expect(screen.getByRole("button", { name: "Готово, далее" })).toBeEnabled();
+  });
+
+  it("does not hold Готово, далее for accepted photo slots while wide_plates_resolved is false", () => {
+    const draft = makeDraft("ПБ 76-15-8 13");
+    draft.metadata.wide_plate_lines = [{ id: "live-wide-0", line: "ПБ 76-15-8 13", qty: 13 }];
+    draft.metadata.wide_plates_resolved = false;
+    draft.metadata.invalid_widths_resolved = true;
+    draft.metadata.unpriced_plates_resolved = true;
+
+    render(
+      <PlateInputStep
+        {...screenProps}
+        recognitionStarted
+        pendingBatchReview={false}
+        draft={draft}
+        pages={[{ ...makePage("a"), batchReviewText: "ПБ 76-15-8 13" }]}
+        batchReviewText="ПБ 76-15-8 13"
+        normalizedText="ПБ 76-15-8 13"
+        wideSlotsByPage={{
+          a: [
+            {
+              id: "slot-1",
+              lineIndex: 0,
+              action: "confirm",
+              replacementText: "",
+              accepted: true,
+            },
+          ],
+        }}
+      />,
+    );
+
+    const finish = screen.getByRole("button", { name: "Готово, далее" });
+    expect(finish).toBeEnabled();
+    expect(finish).not.toHaveAttribute("title", "Сначала примите решение по позициям шире стандартной");
+  });
+
+  it("holds Готово, далее when a photo page has a wide line and no slot", () => {
+    const draft = makeDraft("ПБ 76-15-8 13");
+    draft.metadata.wide_plate_lines = [{ id: "live-wide-0", line: "ПБ 76-15-8 13", qty: 13 }];
+    draft.metadata.wide_plates_resolved = true;
+    draft.metadata.invalid_widths_resolved = true;
+    draft.metadata.unpriced_plates_resolved = true;
+
+    render(
+      <PlateInputStep
+        {...screenProps}
+        recognitionStarted
+        pendingBatchReview={false}
+        draft={draft}
+        pages={[{ ...makePage("a"), batchReviewText: "ПБ 76-15-8 13" }]}
+        batchReviewText="ПБ 76-15-8 13"
+        normalizedText="ПБ 76-15-8 13"
+        wideSlotsByPage={{ a: [] }}
+      />,
+    );
+
+    const finish = screen.getByRole("button", { name: "Готово, далее" });
+    expect(finish).toBeDisabled();
+    expect(finish).toHaveAttribute("title", "Сначала примите решение по позициям шире стандартной");
   });
 });
 
@@ -854,5 +939,129 @@ describe("PlateInputStep live OCR banners", () => {
     expect(screen.getByText(/fresh-full-list/)).toBeInTheDocument();
     expect(screen.queryByText(/stale-2-line/)).not.toBeInTheDocument();
     expect(screen.queryByText(OCR_VERIFY_FAILED_REVIEW_MESSAGE)).not.toBeInTheDocument();
+  });
+});
+
+describe("PlateInputStep text review without photos", () => {
+  const wideLine = "ПБ 76-15-8 13";
+
+  it("shows the slot section for text review without photos", () => {
+    const draft = makeDraft(wideLine);
+
+    render(
+      <PlateInputStep
+        draft={draft}
+        pendingBatchReview
+        sourceText=""
+        batchReviewText={wideLine}
+        normalizedText={wideLine}
+        pages={[]}
+        activePageId={null}
+        recognizedImageUrl={null}
+        recognizedImageName={null}
+        errorMessage={null}
+        isRecognizing={false}
+        wideSlots={[
+          {
+            id: "slot-text",
+            lineIndex: 0,
+            action: "confirm",
+            replacementText: "",
+            accepted: false,
+          },
+        ]}
+        onTextChange={noop}
+        onBatchReviewTextChange={noop}
+        onAddFiles={noop}
+        onRemovePage={noop}
+        onSelectPage={noop}
+        onRecognize={noop}
+        onConfirmBatch={noop}
+        onFinishPlates={noop}
+        onReset={noop}
+        onWidePlateDecisionChange={noop}
+        onApplyWidePlates={noop}
+      />,
+    );
+
+    expect(screen.getByRole("button", { name: "▸ 1 позиций требуют внимания" })).toBeInTheDocument();
+    expect(screen.queryByText(/Количество:/)).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "▸ 1 позиций требуют внимания" }));
+    expect(screen.queryByText(/Количество:/)).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "ОК" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Список верен" })).toBeEnabled();
+  });
+
+  const textSlot = (accepted: boolean) => ({
+    id: "slot-text",
+    lineIndex: 0,
+    action: "confirm" as const,
+    replacementText: "",
+    accepted,
+  });
+
+  const textFinishDraft = (resolved: boolean) => {
+    const draft = makeDraft(wideLine);
+    draft.metadata.wide_plate_lines = [{ id: "live-wide-0", line: wideLine, qty: 13 }];
+    draft.metadata.wide_plates_resolved = resolved;
+    draft.metadata.invalid_widths_resolved = true;
+    draft.metadata.unpriced_plates_resolved = true;
+    return draft;
+  };
+
+  const renderTextFinish = (
+    resolved: boolean,
+    slots: ReturnType<typeof textSlot>[],
+  ) => {
+    render(
+      <PlateInputStep
+        draft={textFinishDraft(resolved)}
+        pendingBatchReview={false}
+        sourceText=""
+        batchReviewText={wideLine}
+        normalizedText={wideLine}
+        pages={[]}
+        activePageId={null}
+        recognizedImageUrl={null}
+        recognizedImageName={null}
+        errorMessage={null}
+        isRecognizing={false}
+        wideSlots={slots}
+        wideSlotsByPage={{ [TEXT_REVIEW_SLOT_PAGE_ID]: slots }}
+        onTextChange={noop}
+        onBatchReviewTextChange={noop}
+        onAddFiles={noop}
+        onRemovePage={noop}
+        onSelectPage={noop}
+        onRecognize={noop}
+        onConfirmBatch={noop}
+        onFinishPlates={noop}
+        onReset={noop}
+      />,
+    );
+  };
+
+  it("enables Готово, далее when the text-review slot is accepted", () => {
+    renderTextFinish(false, [textSlot(true)]);
+
+    const finish = screen.getByRole("button", { name: "Готово, далее" });
+    expect(finish).toBeEnabled();
+    expect(finish).not.toHaveAttribute("title", "Сначала примите решение по позициям шире стандартной");
+  });
+
+  it("holds Готово, далее when the text-review slot is open", () => {
+    renderTextFinish(true, [textSlot(false)]);
+
+    const finish = screen.getByRole("button", { name: "Готово, далее" });
+    expect(finish).toBeDisabled();
+    expect(finish).toHaveAttribute("title", "Сначала примите решение по позициям шире стандартной");
+  });
+
+  it("holds Готово, далее when the text line is wide and has no slot", () => {
+    renderTextFinish(true, []);
+
+    const finish = screen.getByRole("button", { name: "Готово, далее" });
+    expect(finish).toBeDisabled();
+    expect(finish).toHaveAttribute("title", "Сначала примите решение по позициям шире стандартной");
   });
 });

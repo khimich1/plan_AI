@@ -18,7 +18,7 @@ from app.schemas.pile_cost import (
     PileCostState,
 )
 from app.schemas.price_desk import PriceDeskPreview, PriceDeskStatus
-from app.services.commercial_upload_validation import read_upload_file_capped
+from app.services.commercial_upload_validation import read_upload_file
 from app.services.pile_cost_service import PileCostConflict, PileCostNotFound, PileCostService
 from app.services.price_desk_service import PriceDeskError, PriceDeskService
 
@@ -39,7 +39,7 @@ async def prices_preview(
     _user: dict = Depends(REQUIRE_PRICES),
     service: PriceDeskService = Depends(get_price_desk_service),
 ) -> PriceDeskPreview:
-    file_bytes = await read_upload_file_capped(file)
+    file_bytes = await read_upload_file(file)
     try:
         return service.preview(file_bytes, file.filename)
     except PriceDeskError as exc:
@@ -60,7 +60,7 @@ async def prices_apply(
     _user: dict = Depends(REQUIRE_PRICES),
     service: PriceDeskService = Depends(get_price_desk_service),
 ) -> PriceDeskPreview:
-    file_bytes = await read_upload_file_capped(file)
+    file_bytes = await read_upload_file(file)
     try:
         return service.apply(file_bytes, file.filename, file_sha256)
     except PriceDeskError as exc:

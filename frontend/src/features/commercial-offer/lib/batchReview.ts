@@ -127,6 +127,7 @@ export const liveWideDraftForScreen = (
   pendingBatchReview: boolean,
   batchReviewText: string,
   normalizedText: string,
+  options?: { reopenKnownWideLines?: boolean },
 ): CommercialDraftDetails | null | undefined => {
   if (!draft) {
     return draft;
@@ -136,5 +137,5 @@ export const liveWideDraftForScreen = (
   if (!overlayText) {
     return reviewDraft;
   }
-  return overlayDraftWithLiveWideLines(reviewDraft, overlayText);
+  return overlayDraftWithLiveWideLines(reviewDraft, overlayText, options);
 };

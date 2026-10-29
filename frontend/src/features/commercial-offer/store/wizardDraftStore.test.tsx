@@ -8,6 +8,7 @@ import type {
   WizardStepId,
   WizardStoreState,
 } from "@/features/commercial-offer/types/commercialOffer";
+import type { WideSlot } from "@/features/commercial-offer/lib/widePlateSlots";
 import {
   getWizardStepOrder,
   shouldSkipClientStep,
@@ -844,5 +845,88 @@ describe("WizardDraftProvider append cycle sticky header (MNA-502)", () => {
     expect(snap?.clientName).toBe("ООО Стикки");
     expect(snap?.discountPercent).toBe(7.5);
     expect(snap?.lastDraft?.metadata.append_batches).toEqual([]);
+  });
+});
+
+describe("wide slots per page", () => {
+  let dispatchRef: MutableRefObject<WizardDraftDispatch | null>;
+
+  beforeEach(() => {
+    dispatchRef = { current: null };
+  });
+
+  afterEach(() => {
+    cleanup();
+  });
+
+  const slotFor = (id: string, replacementText: string): WideSlot => ({
+    id,
+    lineIndex: 0,
+    action: "confirm",
+    replacementText,
+    accepted: true,
+  });
+
+  const setPageSlots = (pageId: string, slots: WideSlot[]) => {
+    dispatchRef.current?.({
+      type: "set-page-wide-slots",
+      pageId,
+      slots,
+    });
+  };
+
+  it("stores wide slots per page", async () => {
+    const stateRef: MutableRefObject<WizardStoreState | null> = { current: null };
+    render(
+      <WizardDraftProvider>
+        <Harness actionRef={dispatchRef} stateRef={stateRef} />
+      </WizardDraftProvider>,
+    );
+
+    const slotA = slotFor("slot-a", "поле A");
+    const slotB = slotFor("slot-b", "поле B");
+    const slotA2 = slotFor("slot-a2", "поле A2");
+
+    await act(async () => {
+      setPageSlots("page-a", [slotA]);
+      setPageSlots("page-b", [slotB]);
+    });
+
+    expect(stateRef.current?.wideSlotsByPage["page-a"]).toEqual([slotA]);
+    expect(stateRef.current?.wideSlotsByPage["page-b"]).toEqual([slotB]);
+
+    await act(async () => {
+      setPageSlots("page-a", [slotA2]);
+    });
+
+    expect(stateRef.current?.wideSlotsByPage["page-a"]).toEqual([slotA2]);
+    expect(stateRef.current?.wideSlotsByPage["page-b"]).toEqual([slotB]);
+  });
+
+  it("hydrate keeps wide slots already on the page", async () => {
+    const stateRef: MutableRefObject<WizardStoreState | null> = { current: null };
+    render(
+      <WizardDraftProvider>
+        <Harness actionRef={dispatchRef} stateRef={stateRef} />
+      </WizardDraftProvider>,
+    );
+
+    const slotA = slotFor("slot-a", "поле A");
+
+    await act(async () => {
+      setPageSlots("page-a", [slotA]);
+      dispatchRef.current?.({
+        type: "hydrate-draft",
+        payload: makeDraft({
+          metadata: {
+            wide_plate_lines: [{ id: "live-wide-0", line: "ПБ 76-15-8 13", qty: 13 }],
+            wide_plates_resolved: false,
+          },
+        }),
+      });
+    });
+
+    expect(stateRef.current?.wideSlotsByPage["page-a"]).toEqual([slotA]);
+    expect(stateRef.current?.wideSlotsByPage["page-a"]?.[0]?.accepted).toBe(true);
   });
 });

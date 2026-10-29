@@ -174,6 +174,15 @@ describe("overlayDraftWithLiveWideLines", () => {
     expect(overlay.metadata.wide_plates_resolved).toBe(true);
   });
 
+  it("reopens a known wide mark on a photo that has not applied yet", () => {
+    const draft = makeDraft([{ id: "wide-1", line: "ПБ 56-15-8 20", qty: 20 }], true);
+    const overlay = overlayDraftWithLiveWideLines(draft, "ПБ 56-15-8 20", {
+      reopenKnownWideLines: true,
+    });
+    expect(overlay.metadata.wide_plate_lines.map((item) => item.line)).toEqual(["ПБ 56-15-8 20"]);
+    expect(overlay.metadata.wide_plates_resolved).toBe(false);
+  });
+
   it("reopens the card when live paste finds wides the server missed", () => {
     const draft = makeDraft([{ id: "wide-1", line: "ПБ 65-14-8 2", qty: 2 }], true);
     const overlay = overlayDraftWithLiveWideLines(

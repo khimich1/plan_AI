@@ -4,7 +4,8 @@
 > **Дата:** 2026-10-24  
 > **Статус:** принят. План: [`../develop/plans/2026-10-24-kp-ocr-wide-plate-choice-hold.md`](../develop/plans/2026-10-24-kp-ocr-wide-plate-choice-hold.md).  
 > **Родитель:** [`kp-ocr-wide-plate-queue-mismatch.md`](./kp-ocr-wide-plate-queue-mismatch.md). План родителя уже реализован.  
-> **Рядом:** [`kp-ocr-wide-plate-replace.md`](./kp-ocr-wide-plate-replace.md)
+> **Рядом:** [`kp-ocr-wide-plate-replace.md`](./kp-ocr-wide-plate-replace.md)  
+> **Дальше:** [`kp-ocr-wide-plate-per-photo-card.md`](./kp-ocr-wide-plate-per-photo-card.md) — после apply на первом фото карточка широких плит должна открываться на втором.
 
 ---
 

@@ -418,6 +418,19 @@ export type WizardStoreState = {
    * Hydrate still merges the next draft while this is set.
    */
   widePlateChoicesHeld: boolean;
+  /** Wide-mark keys already applied on each photo. Another photo does not inherit them. */
+  widePlateSettledKeysByPage: Record<string, string[]>;
+  /** Photo-review wide slots for this wizard session, keyed by queue page id. */
+  wideSlotsByPage: Record<
+    string,
+    Array<{
+      id: string;
+      lineIndex: number;
+      action: WidePlateAction;
+      replacementText: string;
+      accepted: boolean;
+    }>
+  >;
   unpricedPlateActions: Record<string, { action: UnpricedPlateAction; loadCode: number | null }>;
   invalidWidthActions: Record<string, { action: InvalidWidthAction; widthMm: number | null }>;
   lastDraft: CommercialDraftDetails | null;

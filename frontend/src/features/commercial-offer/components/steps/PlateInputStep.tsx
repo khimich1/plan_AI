@@ -30,7 +30,14 @@ import {
 } from "@/features/commercial-offer/lib/ocrVerifyFailed";
 import { InvalidWidthsInlineSection } from "@/features/commercial-offer/components/InvalidWidthsInlineSection";
 import { UnpricedPlatesInlineSection } from "@/features/commercial-offer/components/UnpricedPlatesInlineSection";
+import { WidePlateSlotSection } from "@/features/commercial-offer/components/WidePlateSlotSection";
 import { WidePlatesInlineSection } from "@/features/commercial-offer/components/WidePlatesInlineSection";
+import {
+  photoQueueWidePlateBlocksFinish,
+  TEXT_REVIEW_SLOT_PAGE_ID,
+  type WideSlot,
+  type WideSlotAction,
+} from "@/features/commercial-offer/lib/widePlateSlots";
 import { SourceImageQueueControls } from "@/features/commercial-offer/components/SourceImageQueueControls";
 import type { SourceImageQueueItem } from "@/features/commercial-offer/lib/sourceImageQueue";
 import { Alert } from "@/shared/ui/Alert";
@@ -69,6 +76,19 @@ type PlateInputStepProps = {
     string,
     { action: WidePlateAction; replacementText: string; sourceLine?: string }
   >;
+  /** Slots for photo review or text review without photos. Omitted keeps the resolve section. */
+  wideSlots?: WideSlot[];
+  wideSlotsByPage?: Record<string, WideSlot[]>;
+  /** Photo page id, or text-review. A new key collapses the slot list. */
+  collapseKey?: string;
+  onAcceptWideSlot?: (slotId: string) => void;
+  onApplyWideSlots?: (slotIds: string[]) => void;
+  onWideSlotAction?: (slotId: string, action: WideSlotAction) => void;
+  onWideSlotReplacement?: (slotId: string, replacementText: string) => void;
+  /** This photo still has a wide mark that was not applied here. */
+  reopenKnownWideLines?: boolean;
+  /** Some photo in the queue still has a wide mark without its own apply. */
+  queueHasUndecidedWidePlates?: boolean;
   unpricedPlateDecisions?: Record<string, { action: UnpricedPlateAction; loadCode: number | null }>;
   invalidWidthDecisions?: Record<string, { action: InvalidWidthAction; widthMm: number | null }>;
   aiInstruction?: string;
@@ -169,6 +189,15 @@ export const PlateInputStep = ({
   isConfirmingBatch = false,
   isProceeding = false,
   widePlateDecisions = {},
+  wideSlots,
+  wideSlotsByPage,
+  collapseKey,
+  onAcceptWideSlot,
+  onApplyWideSlots,
+  onWideSlotAction,
+  onWideSlotReplacement,
+  reopenKnownWideLines = false,
+  queueHasUndecidedWidePlates = false,
   unpricedPlateDecisions = {},
   invalidWidthDecisions = {},
   aiInstruction = "",
@@ -207,7 +236,9 @@ export const PlateInputStep = ({
   const hasDraft = Boolean(draft);
   const labels = PRODUCT_TYPE_CONFIG.plates.labels;
   const isBatchReviewMode = hasDraft && pendingBatchReview;
-  const liveWideDraft = liveWideDraftForScreen(draft, isBatchReviewMode, batchReviewText, normalizedText);
+  const liveWideDraft = liveWideDraftForScreen(draft, isBatchReviewMode, batchReviewText, normalizedText, {
+    reopenKnownWideLines,
+  });
   const reviewHighlights = useBatchReviewHighlights({
     text: batchReviewText,
     productType: "plates",
@@ -251,8 +282,23 @@ export const PlateInputStep = ({
 
   );
 
-  const hasUnresolvedWidePlates =
-    Boolean(liveWideDraft?.metadata.wide_plate_lines?.length) && !liveWideDraft?.metadata.wide_plates_resolved;
+  const photoQueue = Boolean(recognitionStarted) && pages.length > 0;
+  const hasUnresolvedWidePlates = photoQueue
+    ? photoQueueWidePlateBlocksFinish(
+        pages.map((page) => ({
+          text: page.id === activePageId ? batchReviewText : page.batchReviewText,
+          slots: wideSlotsByPage?.[page.id] ?? [],
+        })),
+      )
+    : wideSlots !== undefined
+      ? photoQueueWidePlateBlocksFinish([
+          {
+            text: batchReviewText,
+            slots: wideSlotsByPage?.[TEXT_REVIEW_SLOT_PAGE_ID] ?? [],
+          },
+        ])
+      : queueHasUndecidedWidePlates ||
+        (Boolean(liveWideDraft?.metadata.wide_plate_lines?.length) && !liveWideDraft?.metadata.wide_plates_resolved);
   const hasUnresolvedInvalidWidths =
     Boolean(draft?.metadata.invalid_width_lines?.length) && !draft?.metadata.invalid_widths_resolved;
   const hasUnresolvedUnpricedPlates =
@@ -565,15 +611,29 @@ export const PlateInputStep = ({
             </>
           )}
 
-          {onWidePlateDecisionChange && onApplyWidePlates && (
-            <WidePlatesInlineSection
-              draft={liveWideDraft ?? draft}
-              decisions={widePlateDecisions}
-              isPending={isResolvingWidePlates}
+          {isBatchReviewMode && wideSlots ? (
+            <WidePlateSlotSection
+              lines={batchReviewText.split(/\r?\n/)}
+              slots={wideSlots}
+              collapseKey={collapseKey}
+              onAccept={onAcceptWideSlot}
+              onApply={onApplyWideSlots}
+              onAction={onWideSlotAction}
+              onReplacement={onWideSlotReplacement}
               errorMessage={widePlateErrorMessage}
-              onDecisionChange={onWidePlateDecisionChange}
-              onApply={onApplyWidePlates}
             />
+          ) : (
+            onWidePlateDecisionChange &&
+            onApplyWidePlates && (
+              <WidePlatesInlineSection
+                draft={liveWideDraft ?? draft}
+                decisions={widePlateDecisions}
+                isPending={isResolvingWidePlates}
+                errorMessage={widePlateErrorMessage}
+                onDecisionChange={onWidePlateDecisionChange}
+                onApply={onApplyWidePlates}
+              />
+            )
           )}
 
           {isBatchReviewMode && onAiInstructionChange && onApplyAi && (

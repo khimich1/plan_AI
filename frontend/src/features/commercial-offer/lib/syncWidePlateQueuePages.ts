@@ -66,6 +66,40 @@ const applyWideDecisionsToPageText = (
   return next.join("\n").trim();
 };
 
+/**
+ * Write the wide-plate result onto the open photo only.
+ * Another photo keeps the list the manager is still reviewing.
+ */
+export const applyWideResolveToActivePage = ({
+  pages,
+  activePageId,
+  batchesBefore,
+  resolvedPages,
+  decisions,
+}: {
+  pages: readonly WidePlateQueuePage[];
+  activePageId: string | null;
+  batchesBefore: readonly { normalized_text?: string | null }[];
+  resolvedPages: readonly WidePlateQueuePage[];
+  decisions: readonly AppliedWideDecision[];
+}): WidePlateQueuePage[] => {
+  const resolvedById = new Map(resolvedPages.map((page) => [page.id, page.batchReviewText]));
+  return pages.map((page, index) => {
+    if (page.id !== activePageId) {
+      return { id: page.id, batchReviewText: page.batchReviewText };
+    }
+    return {
+      id: page.id,
+      batchReviewText: resolveAppliedQueuePageText({
+        pageText: page.batchReviewText,
+        batchBefore: batchesBefore[index]?.normalized_text ?? "",
+        batchAfter: resolvedById.get(page.id) ?? page.batchReviewText,
+        decisions,
+      }),
+    };
+  });
+};
+
 /** Page i keeps its own resolved batch, or its edited text with the wide line replaced. */
 export const applyWideResolveToQueuePages = ({
   pages,

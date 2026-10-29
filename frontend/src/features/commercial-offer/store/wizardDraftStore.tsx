@@ -10,6 +10,7 @@ import {
 import { getCurrentBatchReviewText, needsBatchReview } from "@/features/commercial-offer/lib/batchReview";
 import { normalizeLineKey, pruneWidePlateActions } from "@/features/commercial-offer/lib/flushThenResolveWidePlates";
 import { getDraftBatchCount } from "@/features/commercial-offer/lib/getDraftBatchCount";
+import type { WideSlot } from "@/features/commercial-offer/lib/widePlateSlots";
 import { draftStorage } from "@/features/commercial-offer/store/draftStorage";
 import {
   getProductInputStep,
@@ -129,10 +130,12 @@ type WizardDraftAction =
     }
   | { type: "set-execution-terms"; value: string }
   | { type: "set-draft-id"; draftId: string }
+  | { type: "set-page-wide-slots"; pageId: string; slots: WideSlot[] }
   | { type: "hydrate-draft"; payload: CommercialDraftDetails; refreshBatchText?: boolean }
   | { type: "hold-wide-plate-choices" }
   | { type: "release-wide-plate-choices" }
   | { type: "prune-wide-plate-choices"; pageText: string }
+  | { type: "settle-wide-plate-page"; pageId: string; keys: string[] }
   | { type: "sync-after-wide-plates"; payload: CommercialDraftDetails }
   | { type: "sync-after-unpriced-plates"; payload: CommercialDraftDetails }
   | { type: "sync-after-invalid-widths"; payload: CommercialDraftDetails }
@@ -165,6 +168,8 @@ const initialState: WizardStoreState = {
   executionTermsInput: "",
   widePlateActions: {},
   widePlateChoicesHeld: false,
+  widePlateSettledKeysByPage: {},
+  wideSlotsByPage: {},
   unpricedPlateActions: {},
   invalidWidthActions: {},
   lastDraft: null,
@@ -192,6 +197,7 @@ const reducer = (state: WizardStoreState, action: WizardDraftAction): WizardStor
         confirmedBatchCount: 0,
         widePlateActions: {},
         widePlateChoicesHeld: false,
+        widePlateSettledKeysByPage: {},
         unpricedPlateActions: {},
         invalidWidthActions: {},
         isPickingProductType: true,
@@ -237,6 +243,7 @@ const reducer = (state: WizardStoreState, action: WizardDraftAction): WizardStor
         batchReviewText: getCurrentBatchReviewText(action.payload),
         confirmedBatchCount: Math.max(0, batchCount - 1),
         widePlateChoicesHeld: false,
+        widePlateSettledKeysByPage: {},
         lastDraft: action.payload,
       };
     }
@@ -285,10 +292,26 @@ const reducer = (state: WizardStoreState, action: WizardDraftAction): WizardStor
       return { ...state, executionTermsInput: action.value };
     case "set-draft-id":
       return { ...state, draftId: action.draftId };
+    case "set-page-wide-slots":
+      return {
+        ...state,
+        wideSlotsByPage: {
+          ...state.wideSlotsByPage,
+          [action.pageId]: action.slots,
+        },
+      };
     case "hold-wide-plate-choices":
       return { ...state, widePlateChoicesHeld: true };
     case "release-wide-plate-choices":
       return { ...state, widePlateChoicesHeld: false };
+    case "settle-wide-plate-page":
+      return {
+        ...state,
+        widePlateSettledKeysByPage: {
+          ...state.widePlateSettledKeysByPage,
+          [action.pageId]: action.keys,
+        },
+      };
     case "prune-wide-plate-choices": {
       const widePlateActions = pruneWidePlateActions(state.widePlateActions, action.pageText);
       if (widePlateActions === state.widePlateActions) {
@@ -439,6 +462,8 @@ export const WizardDraftProvider = ({ children }: PropsWithChildren) => {
       normalizedText: loaded.normalizedText ?? "",
       isPickingProductType: loaded.isPickingProductType ?? false,
       widePlateChoicesHeld: false,
+      widePlateSettledKeysByPage: loaded.widePlateSettledKeysByPage ?? {},
+      wideSlotsByPage: loaded.wideSlotsByPage ?? {},
       unpricedPlateActions: loaded.unpricedPlateActions ?? {},
       invalidWidthActions: loaded.invalidWidthActions ?? {},
     };

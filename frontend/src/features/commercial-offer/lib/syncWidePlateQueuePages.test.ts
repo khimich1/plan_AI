@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  applyWideResolveToActivePage,
   applyWideResolveToQueuePages,
   resolveAppliedQueuePageText,
   syncWidePlateQueuePages,
@@ -167,5 +168,31 @@ describe("syncWidePlateQueuePages", () => {
         ],
       }),
     ).toBe(after);
+  });
+
+  it("writes the replacement only onto the open photo", () => {
+    const second = "ПБ 56-15-8 20\nПБ 45-15-10 3";
+    const pages = applyWideResolveToActivePage({
+      pages: [
+        { id: "page-1", batchReviewText: "ПБ 76-15-8 13" },
+        { id: "page-2", batchReviewText: second },
+      ],
+      activePageId: "page-1",
+      batchesBefore: [{ normalized_text: "ПБ 76-15-8 13" }, { normalized_text: second }],
+      resolvedPages: [
+        { id: "page-1", batchReviewText: "ПБ 76-12-8 13\nПБ 76-3.0-8 13" },
+        { id: "page-2", batchReviewText: "ПБ 56-12-8 20\nПБ 45-12-10 3" },
+      ],
+      decisions: [
+        {
+          sourceLine: "ПБ 76-15-8 13",
+          action: "replace",
+          replacementText: "ПБ 76-12-8 13\nПБ 76-3.0-8 13",
+        },
+      ],
+    });
+
+    expect(pages[0]?.batchReviewText).toBe("ПБ 76-12-8 13\nПБ 76-3.0-8 13");
+    expect(pages[1]?.batchReviewText).toBe(second);
   });
 });

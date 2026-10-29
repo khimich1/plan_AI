@@ -66,9 +66,7 @@ def ensure_external_ocr_enabled() -> None:
         )
 
 
-async def read_upload_file_capped(upload: UploadFile, max_bytes: int | None = None) -> bytes:
-    """Read upload in chunks; reject before buffering more than max_bytes (default from settings)."""
-    limit = max_bytes if max_bytes is not None else get_settings().commercial_upload_max_bytes
+async def _read_upload(upload: UploadFile, limit: int | None) -> bytes:
     chunks: list[bytes] = []
     total = 0
     while True:
@@ -76,13 +74,24 @@ async def read_upload_file_capped(upload: UploadFile, max_bytes: int | None = No
         if not chunk:
             break
         total += len(chunk)
-        if total > limit:
+        if limit is not None and total > limit:
             raise HTTPException(
                 status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
                 detail="Размер файла превышает допустимый лимит.",
             )
         chunks.append(chunk)
     return b"".join(chunks)
+
+
+async def read_upload_file(upload: UploadFile) -> bytes:
+    """Read a factory price file. No size cap: nginx no longer cuts these uploads either."""
+    return await _read_upload(upload, None)
+
+
+async def read_upload_file_capped(upload: UploadFile, max_bytes: int | None = None) -> bytes:
+    """Read upload in chunks; reject before buffering more than max_bytes (default from settings)."""
+    limit = max_bytes if max_bytes is not None else get_settings().commercial_upload_max_bytes
+    return await _read_upload(upload, limit)
 
 
 def detect_upload_format(data: bytes) -> UploadFormat | None:

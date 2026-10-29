@@ -8,7 +8,6 @@ import { planApplyAiSessionSync } from "@/features/commercial-offer/lib/applyAiS
 import {
   getBatches,
   getCurrentBatchReviewText,
-  liveWideDraftForScreen,
   mergeEditedBatchIntoFullText,
 } from "@/features/commercial-offer/lib/batchReview";
 import { getDraftBatchCount } from "@/features/commercial-offer/lib/getDraftBatchCount";
@@ -39,13 +38,28 @@ import { useSourceImageQueue } from "@/features/commercial-offer/hooks/useSource
 import { applyPromoteSourceImageQueue } from "@/features/commercial-offer/lib/promoteSourceImageQueue";
 import { liveWidePlateLines } from "@/features/commercial-offer/lib/liveWidePlateLines";
 import {
+  carryWideSlots,
+  chooseWideSlotAction,
+  commitWideSlots,
+  photoQueueWidePlateBlocksFinish,
+  prepareTextReviewConfirm,
+  routeWidePlateApply,
+  TEXT_REVIEW_SLOT_PAGE_ID,
+  uniqueWideSlotsByLine,
+} from "@/features/commercial-offer/lib/widePlateSlots";
+import {
   buildWidePlateApplyFlushText,
+  findWidePlateDecision,
   flushThenResolveWidePlates,
 } from "@/features/commercial-offer/lib/flushThenResolveWidePlates";
 import {
-  applyWideResolveToQueuePages,
+  applyWideResolveToActivePage,
   syncWidePlateQueuePages,
 } from "@/features/commercial-offer/lib/syncWidePlateQueuePages";
+import {
+  wideKeysInText,
+  undecidedWideKeys,
+} from "@/features/commercial-offer/lib/widePlatePageGate";
 
 import { WizardProgress } from "@/features/commercial-offer/components/WizardProgress";
 import { ProductTypePicker } from "@/features/commercial-offer/components/ProductTypePicker";
@@ -113,6 +127,9 @@ export const CommercialOfferWizard = ({ productType: productTypeProp }: { produc
   >(null);
   const lineUndoTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [widePlateError, setWidePlateError] = useState<string | null>(null);
+  const wideSlotTextRef = useRef<Record<string, string>>({});
+  const wideSlotsByPageRef = useRef(state.wideSlotsByPage);
+  wideSlotsByPageRef.current = state.wideSlotsByPage;
   const [unpricedPlateError, setUnpricedPlateError] = useState<string | null>(null);
   const [invalidWidthError, setInvalidWidthError] = useState<string | null>(null);
   const {
@@ -484,12 +501,31 @@ export const CommercialOfferWizard = ({ productType: productTypeProp }: { produc
     let draft = currentDraft;
     const batches = getBatches(draft);
     const lastBatch = batches.length > 0 ? batches[batches.length - 1] : undefined;
-    const editedText = state.batchReviewText.trim();
-    const originalBatchText = (lastBatch?.normalized_text ?? "").trim();
+    const plan = prepareTextReviewConfirm(
+      state.batchReviewText,
+      wideSlotsByPageRef.current[TEXT_REVIEW_SLOT_PAGE_ID] ?? [],
+      lastBatch?.normalized_text ?? "",
+    );
+    wideSlotTextRef.current[TEXT_REVIEW_SLOT_PAGE_ID] = plan.text;
+    wideSlotsByPageRef.current = {
+      ...wideSlotsByPageRef.current,
+      [TEXT_REVIEW_SLOT_PAGE_ID]: plan.slots,
+    };
+    dispatch({ type: "set-batch-review-text", text: plan.text });
+    dispatch({
+      type: "set-page-wide-slots",
+      pageId: TEXT_REVIEW_SLOT_PAGE_ID,
+      slots: plan.slots,
+    });
+    if (!plan.closeReview) {
+      setWidePlateError(plan.error);
+      return;
+    }
+    setWidePlateError(null);
 
-    if (editedText && editedText !== originalBatchText) {
+    if (plan.uploadText) {
       try {
-        const mergedText = mergeEditedBatchIntoFullText(batches, editedText);
+        const mergedText = mergeEditedBatchIntoFullText(batches, plan.uploadText);
         draft = await updateInputMutation.mutateAsync({
           draftId: draft.draft_id,
           productType,
@@ -651,16 +687,76 @@ export const CommercialOfferWizard = ({ productType: productTypeProp }: { produc
     }
   };
 
+  const openTextReview = state.pendingBatchReview && !multiPage.hasStarted;
+
+  const wideSlotWriteTarget = (): { pageId: string; lines: string[] } | null => {
+    const photoPageId = multiPage.activeId;
+    if (photoPageId) {
+      const pageText = multiPage.pages.find((page) => page.id === photoPageId)?.batchReviewText ?? "";
+      return { pageId: photoPageId, lines: pageText.split(/\r?\n/) };
+    }
+    if (multiPage.hasStarted) {
+      return null;
+    }
+    return {
+      pageId: TEXT_REVIEW_SLOT_PAGE_ID,
+      lines: state.batchReviewText.split(/\r?\n/),
+    };
+  };
+
+  const applyLocalWideSlots = (slotIds: readonly string[]) => {
+    const target = wideSlotWriteTarget();
+    if (!target) {
+      return;
+    }
+    const { pageId, lines } = target;
+    const stored = uniqueWideSlotsByLine(
+      wideSlotsByPageRef.current[pageId] ?? carryWideSlots(lines, lines, []),
+    );
+    setWidePlateError(null);
+    const committed = commitWideSlots(lines, stored, slotIds);
+    const nextText = committed.lines.join("\n");
+    wideSlotTextRef.current[pageId] = nextText;
+    wideSlotsByPageRef.current = {
+      ...wideSlotsByPageRef.current,
+      [pageId]: committed.slots,
+    };
+    if (multiPage.activeId) {
+      multiPage.updatePageText(multiPage.activeId, nextText);
+    }
+    dispatch({ type: "set-batch-review-text", text: nextText });
+    dispatch({
+      type: "set-page-wide-slots",
+      pageId,
+      slots: committed.slots,
+    });
+    if (committed.error) {
+      setWidePlateError(committed.error);
+    }
+  };
+
   const handleApplyWidePlates = async () => {
     if (!currentDraft?.draft_id) {
       return;
     }
     setWidePlateError(null);
     const photoQueue = multiPage.hasStarted && multiPage.pages.length > 0;
+    // Confirmed photo queue still resolves. Open photo review and open text review write locally.
+    if (routeWidePlateApply(photoQueue && !multiPage.allConfirmed, { textReview: openTextReview }) === "local") {
+      const pageId = multiPage.activeId ?? (openTextReview ? TEXT_REVIEW_SLOT_PAGE_ID : null);
+      const openIds = (pageId ? (state.wideSlotsByPage[pageId] ?? []) : [])
+        .filter((slot) => !slot.accepted)
+        .map((slot) => slot.id);
+      applyLocalWideSlots(openIds);
+      return;
+    }
     const pagesSnapshot = multiPage.pages;
     const activePageId = multiPage.activeId;
     const batchesBefore = currentDraft.metadata.plate_batches ?? [];
-    const wideLines = currentDraft.metadata.wide_plate_lines ?? [];
+    const activePageText = pagesSnapshot.find((page) => page.id === activePageId)?.batchReviewText ?? "";
+    const wideLines = photoQueue
+      ? liveWidePlateLines(activePageText)
+      : (currentDraft.metadata.wide_plate_lines ?? []);
     const decisionsById = state.widePlateActions;
     const flushText = buildWidePlateApplyFlushText({
       hasStarted: multiPage.hasStarted,
@@ -706,18 +802,33 @@ export const CommercialOfferWizard = ({ productType: productTypeProp }: { produc
         // The page was not written. Keep the hold so the next hydrate does not drop replace/exclude.
         return;
       }
-      const writtenPages = applyWideResolveToQueuePages({
+      const activePage = pagesSnapshot.find((page) => page.id === activePageId);
+      const pageDecisions = liveWidePlateLines(activePage?.batchReviewText ?? "").map((line) => {
+        const decision = findWidePlateDecision(line, decisionsById);
+        return {
+          sourceLine: decision?.sourceLine || line.line,
+          action: decision?.action ?? "confirm",
+          replacementText: decision?.replacementText ?? "",
+        };
+      });
+      const writtenPages = applyWideResolveToActivePage({
         pages: pagesSnapshot,
+        activePageId,
         batchesBefore,
         resolvedPages: layout.pages,
-        decisions: wideLines.map((line) => ({
-          sourceLine: line.line,
-          action: decisionsById[line.id]?.action ?? "confirm",
-          replacementText: decisionsById[line.id]?.replacementText ?? "",
-        })),
+        decisions: pageDecisions,
       });
       for (const page of writtenPages) {
-        multiPage.updatePageText(page.id, page.batchReviewText);
+        if (page.id === activePageId) {
+          multiPage.updatePageText(page.id, page.batchReviewText);
+        }
+      }
+      if (activePageId) {
+        dispatch({
+          type: "settle-wide-plate-page",
+          pageId: activePageId,
+          keys: wideKeysInText(activePage?.batchReviewText ?? ""),
+        });
       }
       const activeWritten =
         writtenPages.find((page) => page.id === activePageId)?.batchReviewText ?? layout.activePageText;
@@ -1167,17 +1278,65 @@ export const CommercialOfferWizard = ({ productType: productTypeProp }: { produc
 
   const activeReviewPage = multiPage.activePage;
   const multiPendingReview = multiPage.hasStarted && !multiPage.allConfirmed;
+  const activeReviewPageId = activeReviewPage?.id ?? null;
+  const activeReviewPageText = activeReviewPage?.batchReviewText;
+  useEffect(() => {
+    if (!multiPendingReview || !activeReviewPageId || activeReviewPageText === undefined) {
+      return;
+    }
+    if (wideSlotTextRef.current[activeReviewPageId] === activeReviewPageText) {
+      return;
+    }
+    const previous = wideSlotTextRef.current[activeReviewPageId];
+    const stored = uniqueWideSlotsByLine(wideSlotsByPageRef.current[activeReviewPageId] ?? []);
+    const previousLines =
+      previous === undefined ? activeReviewPageText.split(/\r?\n/) : previous.split(/\r?\n/);
+    const nextSlots = carryWideSlots(previousLines, activeReviewPageText.split(/\r?\n/), stored);
+    wideSlotTextRef.current[activeReviewPageId] = activeReviewPageText;
+    dispatch({ type: "set-page-wide-slots", pageId: activeReviewPageId, slots: nextSlots });
+  }, [activeReviewPageId, activeReviewPageText, dispatch, multiPendingReview]);
+  useEffect(() => {
+    if (!openTextReview) {
+      return;
+    }
+    const text = state.batchReviewText;
+    if (wideSlotTextRef.current[TEXT_REVIEW_SLOT_PAGE_ID] === text) {
+      return;
+    }
+    const previous = wideSlotTextRef.current[TEXT_REVIEW_SLOT_PAGE_ID];
+    const stored = uniqueWideSlotsByLine(wideSlotsByPageRef.current[TEXT_REVIEW_SLOT_PAGE_ID] ?? []);
+    const previousLines = previous === undefined ? text.split(/\r?\n/) : previous.split(/\r?\n/);
+    const nextSlots = carryWideSlots(previousLines, text.split(/\r?\n/), stored);
+    wideSlotTextRef.current[TEXT_REVIEW_SLOT_PAGE_ID] = text;
+    wideSlotsByPageRef.current = {
+      ...wideSlotsByPageRef.current,
+      [TEXT_REVIEW_SLOT_PAGE_ID]: nextSlots,
+    };
+    dispatch({ type: "set-page-wide-slots", pageId: TEXT_REVIEW_SLOT_PAGE_ID, slots: nextSlots });
+  }, [dispatch, openTextReview, state.batchReviewText]);
   const pendingBatchReview = multiPendingReview || state.pendingBatchReview;
   const reviewBatchText =
     multiPage.hasStarted && activeReviewPage ? activeReviewPage.batchReviewText : state.batchReviewText;
-  const liveWideDraft = liveWideDraftForScreen(
-    currentDraft,
-    pendingBatchReview,
-    reviewBatchText,
-    state.normalizedText,
-  );
-  const hasUnresolvedWidePlates =
-    Boolean(liveWideDraft?.metadata.wide_plate_lines?.length) && !liveWideDraft?.metadata.wide_plates_resolved;
+  const reopenKnownWideLines =
+    multiPage.hasStarted &&
+    Boolean(activeReviewPage) &&
+    undecidedWideKeys(
+      reviewBatchText,
+      state.widePlateSettledKeysByPage[activeReviewPage?.id ?? ""] ?? [],
+    ).length > 0;
+  const hasUnresolvedWidePlates = multiPage.hasStarted
+    ? photoQueueWidePlateBlocksFinish(
+        multiPage.pages.map((page) => ({
+          text: page.id === multiPage.activeId ? reviewBatchText : page.batchReviewText,
+          slots: state.wideSlotsByPage[page.id] ?? [],
+        })),
+      )
+    : photoQueueWidePlateBlocksFinish([
+        {
+          text: state.batchReviewText,
+          slots: state.wideSlotsByPage[TEXT_REVIEW_SLOT_PAGE_ID] ?? [],
+        },
+      ]);
   const hasUnresolvedUnpricedPlates =
     Boolean(currentDraft?.metadata.unpriced_plate_lines?.length) &&
     !currentDraft?.metadata.unpriced_plates_resolved;
@@ -1367,6 +1526,65 @@ export const CommercialOfferWizard = ({ productType: productTypeProp }: { produc
         isConfirmingBatch={updateInputMutation.isPending}
         isProceeding={calculateMutation.isPending}
         widePlateDecisions={state.widePlateActions}
+        wideSlots={
+          multiPendingReview && activeReviewPage
+            ? (state.wideSlotsByPage[activeReviewPage.id] ?? [])
+            : !multiPage.hasStarted
+              ? (state.wideSlotsByPage[TEXT_REVIEW_SLOT_PAGE_ID] ?? [])
+              : undefined
+        }
+        wideSlotsByPage={state.wideSlotsByPage}
+        collapseKey={
+          multiPendingReview && activeReviewPage
+            ? activeReviewPage.id
+            : !multiPage.hasStarted
+              ? TEXT_REVIEW_SLOT_PAGE_ID
+              : undefined
+        }
+        onAcceptWideSlot={(slotId) => applyLocalWideSlots([slotId])}
+        onApplyWideSlots={(slotIds) => applyLocalWideSlots(slotIds)}
+        onWideSlotAction={(slotId, action) => {
+          const target = wideSlotWriteTarget();
+          if (!target) {
+            return;
+          }
+          const { pageId, lines } = target;
+          const stored = uniqueWideSlotsByLine(wideSlotsByPageRef.current[pageId] ?? []);
+          const slots = uniqueWideSlotsByLine(
+            stored.map((slot) => {
+              if (slot.id !== slotId) {
+                return slot;
+              }
+              const line = lines[slot.lineIndex] ?? "";
+              const qty = liveWidePlateLines(line)[0]?.qty ?? 1;
+              return chooseWideSlotAction(slot, action, line, qty);
+            }),
+          );
+          wideSlotsByPageRef.current = { ...wideSlotsByPageRef.current, [pageId]: slots };
+          dispatch({
+            type: "set-page-wide-slots",
+            pageId,
+            slots,
+          });
+        }}
+        onWideSlotReplacement={(slotId, replacementText) => {
+          const target = wideSlotWriteTarget();
+          if (!target) {
+            return;
+          }
+          const { pageId } = target;
+          const stored = uniqueWideSlotsByLine(wideSlotsByPageRef.current[pageId] ?? []);
+          const slots = uniqueWideSlotsByLine(
+            stored.map((slot) => (slot.id === slotId ? { ...slot, replacementText } : slot)),
+          );
+          wideSlotsByPageRef.current = { ...wideSlotsByPageRef.current, [pageId]: slots };
+          dispatch({
+            type: "set-page-wide-slots",
+            pageId,
+            slots,
+          });
+        }}
+        reopenKnownWideLines={reopenKnownWideLines}
         unpricedPlateDecisions={state.unpricedPlateActions}
         invalidWidthDecisions={state.invalidWidthActions}
         aiInstruction={aiInstruction}
@@ -1375,9 +1593,40 @@ export const CommercialOfferWizard = ({ productType: productTypeProp }: { produc
         onTextChange={handleSourceTextChange}
         onBatchReviewTextChange={(value) => {
           dispatch({ type: "set-batch-review-text", text: value });
-          if (multiPage.activeId) {
-            multiPage.updatePageText(multiPage.activeId, value);
+          const pageId = multiPage.activeId;
+          if (!pageId) {
+            if (openTextReview) {
+              const previous = wideSlotTextRef.current[TEXT_REVIEW_SLOT_PAGE_ID] ?? state.batchReviewText;
+              const nextSlots = carryWideSlots(
+                previous.split(/\r?\n/),
+                value.split(/\r?\n/),
+                uniqueWideSlotsByLine(wideSlotsByPageRef.current[TEXT_REVIEW_SLOT_PAGE_ID] ?? []),
+              );
+              wideSlotTextRef.current[TEXT_REVIEW_SLOT_PAGE_ID] = value;
+              wideSlotsByPageRef.current = {
+                ...wideSlotsByPageRef.current,
+                [TEXT_REVIEW_SLOT_PAGE_ID]: nextSlots,
+              };
+              dispatch({
+                type: "set-page-wide-slots",
+                pageId: TEXT_REVIEW_SLOT_PAGE_ID,
+                slots: nextSlots,
+              });
+            }
+            return;
           }
+          if (multiPage.hasStarted && !multiPage.allConfirmed) {
+            const previous = multiPage.pages.find((page) => page.id === pageId)?.batchReviewText ?? "";
+            const nextSlots = carryWideSlots(
+              previous.split(/\r?\n/),
+              value.split(/\r?\n/),
+              uniqueWideSlotsByLine(wideSlotsByPageRef.current[pageId] ?? []),
+            );
+            wideSlotTextRef.current[pageId] = value;
+            wideSlotsByPageRef.current = { ...wideSlotsByPageRef.current, [pageId]: nextSlots };
+            dispatch({ type: "set-page-wide-slots", pageId, slots: nextSlots });
+          }
+          multiPage.updatePageText(pageId, value);
         }}
         
         onRecognize={handleRecognize}

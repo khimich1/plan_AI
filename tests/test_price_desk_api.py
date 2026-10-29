@@ -245,6 +245,26 @@ def test_economist_forbidden_on_foreign_get(
     assert response.status_code == 403, response.text
 
 
+def test_price_upload_ignores_commercial_byte_cap(
+    client: CsrfAwareTestClient, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("COMMERCIAL_UPLOAD_MAX_BYTES", "1024")
+    get_settings.cache_clear()
+    xlsx = tmp_path / "Расчет новых цен на ПБ 17.08.2026.xlsx"
+    _write_nikita_xlsx(xlsx)
+    assert xlsx.stat().st_size > 1024
+    preview = _upload(client, PREVIEW, xlsx, cookies=_economist())
+    assert preview.status_code == 200, preview.text
+    applied = _upload(
+        client,
+        APPLY,
+        xlsx,
+        cookies=_economist(),
+        data={"file_sha256": preview.json()["file_sha256"]},
+    )
+    assert applied.status_code == 200, applied.text
+
+
 def test_economist_can_post_1c_import(client: CsrfAwareTestClient) -> None:
     response = client.post(
         "/api/v1/nomenclature/import-1c",

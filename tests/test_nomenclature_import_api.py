@@ -150,6 +150,20 @@ def test_second_upload_idempotent(client, mock_parse) -> None:
     assert body["unchanged"] >= 1
 
 
+def test_import_ignores_commercial_byte_cap(client, monkeypatch: pytest.MonkeyPatch) -> None:
+    from app.core.settings import get_settings
+
+    monkeypatch.setenv("COMMERCIAL_UPLOAD_MAX_BYTES", "1024")
+    get_settings.cache_clear()
+    response = _upload(
+        client,
+        filename=PILE_FILENAME,
+        content=b"x" * 2048,
+    )
+    assert response.status_code == 422, response.text
+    assert "допустимый лимит" not in response.text
+
+
 def test_bad_file_returns_422(client) -> None:
     response = _upload(
         client,

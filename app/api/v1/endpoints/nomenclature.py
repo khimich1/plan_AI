@@ -20,7 +20,7 @@ from app.schemas.nomenclature import (
     PriceQueueResolveRequest,
     PriceQueueResolveResponse,
 )
-from app.services.commercial_upload_validation import read_upload_file_capped
+from app.services.commercial_upload_validation import read_upload_file
 from app.services.nomenclature_import_service import (
     NomenclatureImportError,
     NomenclatureImportService,
@@ -52,7 +52,7 @@ async def import_1c_pricelist(
     service: NomenclatureImportService = Depends(get_nomenclature_import_service),
 ) -> Import1cResponse:
     """Загрузить выгрузку 1С и сверить GUID с nomenclature_guid в pb.db."""
-    file_bytes = await read_upload_file_capped(file)
+    file_bytes = await read_upload_file(file)
     kind = _first_nonempty(product_kind_form, product_kind)
     try:
         return service.import_file(

@@ -27,6 +27,8 @@ const makeState = (): WizardStoreState => ({
   executionTermsInput: "",
   widePlateActions: {},
   widePlateChoicesHeld: false,
+  widePlateSettledKeysByPage: {},
+  wideSlotsByPage: {},
   unpricedPlateActions: {},
   invalidWidthActions: {},
   lastDraft: null,

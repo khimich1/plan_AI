@@ -72,6 +72,7 @@ const textMatchKeys = (text: string): Set<string> => {
 export const overlayDraftWithLiveWideLines = (
   draft: CommercialDraftDetails,
   text: string,
+  options?: { reopenKnownWideLines?: boolean },
 ): CommercialDraftDetails => {
   const live = liveWidePlateLines(text);
   const server = draft.metadata.wide_plate_lines ?? [];
@@ -113,8 +114,9 @@ export const overlayDraftWithLiveWideLines = (
     metadata: {
       ...draft.metadata,
       wide_plate_lines: merged,
-      wide_plates_resolved:
-        merged.length === 0 || (Boolean(draft.metadata.wide_plates_resolved) && !liveHasNewWide),
+      wide_plates_resolved: options?.reopenKnownWideLines
+        ? merged.length === 0
+        : merged.length === 0 || (Boolean(draft.metadata.wide_plates_resolved) && !liveHasNewWide),
     },
   };
 };
