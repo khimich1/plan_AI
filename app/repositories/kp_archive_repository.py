@@ -75,7 +75,7 @@ class KpArchiveRepository:
     def update_discount(self, kp_id: int, discount_percent: float) -> bool:
         return offers_write.update_kp_discount(kp_id, discount_percent, self.db_path)
 
-    def update_logistics_cost(self, kp_id: int, logistics_cost: float, *, pile_logistics_cost: float | None = None, pile_trip_overrides: dict | None = None, long_pile_delivery: dict | None = None) -> bool:
+    def update_logistics_cost(self, kp_id: int, logistics_cost: float, *, pile_logistics_cost: float | None = None, pile_trip_overrides: dict | None = None, long_pile_delivery: dict | None = None, plate_trips: int | None = None, pile_trips: int | None = None, fbs_lm_trips: int | None = None, dismiss_trip_notices: list[str] | None = None) -> bool:
         return offers_write.update_kp_logistics_cost(
             kp_id,
             logistics_cost,
@@ -83,7 +83,14 @@ class KpArchiveRepository:
             pile_logistics_cost=pile_logistics_cost,
             pile_trip_overrides=pile_trip_overrides,
             long_pile_delivery=long_pile_delivery,
+            plate_trips=plate_trips,
+            pile_trips=pile_trips,
+            fbs_lm_trips=fbs_lm_trips,
+            dismiss_trip_notices=dismiss_trip_notices,
         )
+
+    def save_trip_counts_json(self, kp_id: int, trip_counts_json: str) -> None:
+        offers_write.save_trip_counts_json(kp_id, trip_counts_json, self.db_path)
 
     def update_status(self, kp_id: int, status: str) -> bool:
         return offers_write.update_kp_status(kp_id, status, self.db_path)

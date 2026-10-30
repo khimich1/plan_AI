@@ -183,6 +183,11 @@ export type ArchiveOfferDetails = {
   pile_logistics_cost?: number;
   pile_trip_overrides?: Record<string, number>;
   pile_trips?: number;
+  pile_trips_formula?: number;
+  pile_trips_notice?: { previous: number; next: number } | null;
+  plate_trips?: number;
+  plate_trips_formula?: number;
+  plate_trips_notice?: { previous: number; next: number } | null;
   pile_trip_pending_marks?: string[];
   pile_delivery_ready?: boolean;
   plate_delivery_total?: number;
@@ -190,6 +195,8 @@ export type ArchiveOfferDetails = {
   fbs_lm_delivery_total?: number;
   fbs_lm_cargo_kg?: number;
   fbs_lm_trips?: number;
+  fbs_lm_trips_formula?: number;
+  fbs_lm_trips_notice?: { previous: number; next: number } | null;
   fbs_lm_delivery_ready?: boolean;
   fbs_lm_pending_marks?: string[];
   fbs_lm_delivery_enabled?: boolean;

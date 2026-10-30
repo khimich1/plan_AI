@@ -551,6 +551,69 @@ def test_discount_does_not_apply_to_fbs_lm_boiler(tmp_path) -> None:
     assert totals["total_with_vat"] == 150.0 + 100_000.0  # 30*10*0.5 + delivery
 
 
+def test_ready_fbs_manual_trips_use_shared_plate_tariff(tmp_path) -> None:
+    """Готовый котёл ФБС: принятое число × logistics_cost. Ноль прячет сумму."""
+    db_path = _seed_weights(tmp_path, [("ФБС 24.6.6-Т", "fbs", 1000.0)])
+    order_data = [
+        {
+            "name": "ФБС 24.6.6-Т",
+            "mark": "ФБС 24.6.6-Т",
+            "product_type": "fbs",
+            "qty": 15,
+            "unit_price": 10.0,
+        }
+    ]
+    bare = _totals(order_data, db_path=db_path, enabled=True, logistics_cost=2_000.0)
+    assert bare["fbs_lm_trips_formula"] == 1
+    assert bare["fbs_lm_trips"] == 1
+    assert bare["fbs_lm_delivery_total"] == 2_000.0
+    assert bare["fbs_lm_trips_notice"] is None
+    basis = bare["trip_counts"]["fbs_lm"]["basis_kg"]
+    assert basis == pytest.approx(15_000.0)
+
+    zeroed = calculate_total_cost(
+        order_data,
+        discount_percent=0,
+        logistics_cost=2_000.0,
+        db_path=db_path,
+        require_all_priced=False,
+        fbs_lm_delivery_enabled=True,
+        weight_catalog_db_path=db_path,
+        trip_counts={
+            "fbs_lm": {"accepted": 0, "basis_kg": basis, "formula": 1},
+            "notices": [],
+        },
+    )
+    assert zeroed["fbs_lm_trips"] == 0
+    assert zeroed["fbs_lm_delivery_total"] == 0.0
+
+    pending = calculate_total_cost(
+        [
+            {
+                "name": "НЕТ-ВЕСА",
+                "mark": "НЕТ-ВЕСА",
+                "product_type": "fbs",
+                "qty": 2,
+                "unit_price": 10.0,
+            }
+        ],
+        discount_percent=0,
+        logistics_cost=2_000.0,
+        db_path=db_path,
+        require_all_priced=False,
+        fbs_lm_delivery_enabled=True,
+        weight_catalog_db_path=db_path,
+        trip_counts={
+            "fbs_lm": {"accepted": 4, "basis_kg": 100.0, "formula": 1},
+            "notices": [{"bucket": "fbs_lm", "previous": 4, "next": 1}],
+        },
+    )
+    assert pending["fbs_lm_delivery_ready"] is False
+    assert pending["fbs_lm_trips"] == 0
+    assert pending["fbs_lm_delivery_total"] == 0.0
+    assert "fbs_lm" not in pending["trip_counts"]
+
+
 def test_update_logistics_cost_old_kp_does_not_enable_boiler(tmp_path) -> None:
     from core.kp.offers_write import update_kp_logistics_cost
     from core.kp_persistence_service import KpPersistenceService

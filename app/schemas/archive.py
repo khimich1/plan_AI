@@ -208,6 +208,11 @@ class KpReadinessPositionsResponse(BaseModel):
     count: int
 
 
+class TripCountNotice(BaseModel):
+    previous: int
+    next: int
+
+
 class ArchiveOfferDetails(BaseModel):
     """Полная карточка КП для страницы архива."""
 
@@ -227,13 +232,20 @@ class ArchiveOfferDetails(BaseModel):
     pile_logistics_cost: float = Field(default=0.0, description="Тариф рейса свай/мостовых.")
     pile_trip_overrides: dict[str, int] = Field(default_factory=dict)
     pile_trips: int = 0
+    pile_trips_formula: int = 0
+    pile_trips_notice: TripCountNotice | None = None
     pile_trip_pending_marks: list[str] = Field(default_factory=list)
+    plate_trips: int = 0
+    plate_trips_formula: int = 0
+    plate_trips_notice: TripCountNotice | None = None
     pile_delivery_ready: bool = True
     plate_delivery_total: float = 0.0
     pile_delivery_total: float = 0.0
     fbs_lm_delivery_total: float = 0.0
     fbs_lm_cargo_kg: float = 0.0
     fbs_lm_trips: int = 0
+    fbs_lm_trips_formula: int = 0
+    fbs_lm_trips_notice: TripCountNotice | None = None
     fbs_lm_delivery_ready: bool = True
     fbs_lm_pending_marks: list[str] = Field(default_factory=list)
     fbs_lm_delivery_enabled: bool = False
@@ -285,6 +297,10 @@ class UpdateLogisticsCostRequest(BaseModel):
     pile_logistics_cost: float | None = Field(default=None, ge=0)
     pile_trip_overrides: dict[str, int] | None = None
     long_pile_delivery: dict[str, Any] | None = None
+    plate_trips: int | None = Field(default=None, ge=0)
+    pile_trips: int | None = Field(default=None, ge=0)
+    fbs_lm_trips: int | None = Field(default=None, ge=0)
+    dismiss_trip_notices: list[Literal["plate", "pile", "fbs_lm"]] | None = None
 
 
 class MoveToProductionRequest(BaseModel):

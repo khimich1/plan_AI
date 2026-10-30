@@ -54,6 +54,7 @@ class KpRepository:
         fbs_lm_delivery_enabled: bool = False,
         long_pile_delivery_enabled: bool = False,
         long_pile_delivery: dict | None = None,
+        trip_counts: dict | None = None,
     ) -> int:
         return offers_write.save_kp_to_db(
             creation_date=creation_date or datetime.now().strftime("%d.%m.%Y"),
@@ -78,6 +79,7 @@ class KpRepository:
             fbs_lm_delivery_enabled=fbs_lm_delivery_enabled,
             long_pile_delivery_enabled=long_pile_delivery_enabled,
             long_pile_delivery=long_pile_delivery,
+            trip_counts=trip_counts,
         )
 
     def update_offer_from_order_data(
@@ -99,6 +101,7 @@ class KpRepository:
         fbs_lm_delivery_enabled: bool | None = None,
         long_pile_delivery_enabled: bool | None = None,
         long_pile_delivery: dict | None = None,
+        trip_counts: dict | None = None,
     ) -> int:
         """Append/update existing KP by ``line_id`` (same ``kp_id``)."""
         return offers_write.update_kp_from_order_data(
@@ -119,6 +122,7 @@ class KpRepository:
             fbs_lm_delivery_enabled=fbs_lm_delivery_enabled,
             long_pile_delivery_enabled=long_pile_delivery_enabled,
             long_pile_delivery=long_pile_delivery,
+            trip_counts=trip_counts,
         )
 
     def list_offers_grouped(self, **list_filters) -> dict[str, list[dict]]:

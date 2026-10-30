@@ -183,18 +183,30 @@ export const useUpdateLogisticsCostMutation = () => {
       pileLogisticsCost,
       pileTripOverrides,
       longPileDelivery,
+      plateTrips,
+      pileTrips,
+      fbsLmTrips,
+      dismissTripNotices,
     }: {
       kpId: number;
       logisticsCost: number;
       pileLogisticsCost?: number;
       pileTripOverrides?: Record<string, number>;
       longPileDelivery?: Record<string, { trip_cost: number }>;
+      plateTrips?: number;
+      pileTrips?: number;
+      fbsLmTrips?: number;
+      dismissTripNotices?: Array<"plate" | "pile" | "fbs_lm">;
     }) =>
       archiveApi.updateLogisticsCost(kpId, {
         logisticsCost,
         pileLogisticsCost,
         pileTripOverrides,
         longPileDelivery,
+        plateTrips,
+        pileTrips,
+        fbsLmTrips,
+        dismissTripNotices,
       }),
     onSuccess: (offer) => {
       queryClient.setQueryData(archiveKeys.detail(offer.kp_id), offer);

@@ -51,6 +51,10 @@ type UpdateDraftMetaPayload = {
   pileLogisticsCost?: number;
   pileTripOverrides?: Record<string, number>;
   longPileDelivery?: Record<string, { trip_cost: number }>;
+  plateTrips?: number;
+  pileTrips?: number;
+  fbsLmTrips?: number;
+  dismissTripNotices?: Array<"plate" | "pile" | "fbs_lm">;
 };
 
 type WidePlateDecisionPayload = {
@@ -232,6 +236,10 @@ export const commercialOfferApi = {
         pile_logistics_cost: payload.pileLogisticsCost,
         pile_trip_overrides: payload.pileTripOverrides,
         long_pile_delivery: payload.longPileDelivery,
+        plate_trips: payload.plateTrips,
+        pile_trips: payload.pileTrips,
+        fbs_lm_trips: payload.fbsLmTrips,
+        dismiss_trip_notices: payload.dismissTripNotices,
       }),
       { "Content-Type": "application/json" },
     ),

@@ -344,6 +344,10 @@ class CommercialDraftMetaUpdateRequest(BaseModel):
     pile_logistics_cost: float | None = None
     pile_trip_overrides: dict[str, int] | None = None
     long_pile_delivery: dict[str, Any] | None = None
+    plate_trips: int | None = Field(default=None, ge=0)
+    pile_trips: int | None = Field(default=None, ge=0)
+    fbs_lm_trips: int | None = Field(default=None, ge=0)
+    dismiss_trip_notices: list[Literal["plate", "pile", "fbs_lm"]] | None = None
     counterparty_id: int | None = None
     client_inn: str | None = Field(default=None, max_length=32)
 

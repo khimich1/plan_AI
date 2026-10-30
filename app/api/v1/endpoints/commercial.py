@@ -481,6 +481,10 @@ def update_draft_meta(
         pile_logistics_cost=payload.pile_logistics_cost,
         pile_trip_overrides=payload.pile_trip_overrides,
         long_pile_delivery=payload.long_pile_delivery,
+        plate_trips=payload.plate_trips,
+        pile_trips=payload.pile_trips,
+        fbs_lm_trips=payload.fbs_lm_trips,
+        dismiss_trip_notices=payload.dismiss_trip_notices,
         counterparty_id=payload.counterparty_id,
         client_inn=payload.client_inn,
     )))

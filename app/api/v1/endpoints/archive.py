@@ -943,6 +943,14 @@ def update_archive_logistics_cost(
         }
         if payload.long_pile_delivery is not None:
             logistics_kwargs["long_pile_delivery"] = payload.long_pile_delivery
+        if payload.plate_trips is not None:
+            logistics_kwargs["plate_trips"] = payload.plate_trips
+        if payload.pile_trips is not None:
+            logistics_kwargs["pile_trips"] = payload.pile_trips
+        if payload.fbs_lm_trips is not None:
+            logistics_kwargs["fbs_lm_trips"] = payload.fbs_lm_trips
+        if payload.dismiss_trip_notices:
+            logistics_kwargs["dismiss_trip_notices"] = payload.dismiss_trip_notices
         return service.update_logistics_cost(
             kp_id,
             payload.logistics_cost,

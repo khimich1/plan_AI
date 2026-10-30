@@ -8,7 +8,6 @@ from typing import Any, Mapping
 from core.cargo_delivery_pricing import (
     cargo_delivery_trips_count,
     compute_fbs_lm_delivery,
-    delivery_service_charge_rub,
     total_order_cargo_weight_kg,
 )
 from core.exceptions import PriceNotFoundError, UnpricedPlatesError
@@ -453,6 +452,74 @@ def format_phone(phone: str) -> str:
     return digits
 
 
+def _plates_present(order_data: list[dict[str, Any]], cargo_kg: float) -> bool:
+    if cargo_kg > 0:
+        return True
+    for item in order_data:
+        product_type = str(item.get("product_type") or "plates").strip().lower()
+        if product_type not in {"plates", "plate"}:
+            continue
+        try:
+            qty = int(item.get("qty") or 0)
+        except (TypeError, ValueError):
+            continue
+        if qty > 0:
+            return True
+    return False
+
+
+def _short_pile_presence(
+    order_data: list[dict[str, Any]],
+    catalog_lookup,
+    *,
+    long_enabled: bool,
+) -> tuple[bool, float]:
+    """Короткий котёл есть, и его масса в кг. Длины > 13 м входят только при флаге выкл."""
+    from core.pile_trip_pricing import (
+        PILE_TRIP_PRODUCT_TYPES,
+        _is_long_pile_length,
+        _length_m_for_mark,
+        _line_mark,
+        _line_product_type,
+        _line_qty,
+    )
+
+    present = False
+    mass = 0.0
+    for item in order_data:
+        if _line_product_type(item) not in PILE_TRIP_PRODUCT_TYPES:
+            continue
+        mark = _line_mark(item)
+        qty = _line_qty(item)
+        if not mark or qty <= 0:
+            continue
+        entry = catalog_lookup(mark)
+        if long_enabled and _is_long_pile_length(_length_m_for_mark(mark, entry)):
+            continue
+        present = True
+        weight = getattr(entry, "weight_kg", None) if entry is not None else None
+        if weight is not None:
+            mass += float(weight) * qty
+    return present, mass
+
+
+def _fbs_lm_present(order_data: list[dict[str, Any]], breakdown) -> bool:
+    from core.cargo_delivery_pricing import fbs_lm_catalog_type
+
+    if breakdown.cargo_kg > 0 or breakdown.pending_marks:
+        return True
+    for item in order_data:
+        if fbs_lm_catalog_type(item) is None:
+            continue
+        try:
+            qty = int(item.get("qty") or 0)
+        except (TypeError, ValueError):
+            continue
+        if qty > 0:
+            return True
+    return False
+
+
 def calculate_total_cost(
     order_data: list[dict[str, Any]],
     discount_percent: float = 0,
@@ -468,6 +535,8 @@ def calculate_total_cost(
     long_pile_delivery_enabled: bool = False,
     long_pile_delivery: Any = None,
     kp_id: int | None = None,
+    trip_counts: Any = None,
+    accepted_trip_overrides: dict[str, int] | None = None,
 ) -> dict[str, Any]:
     """
     Рассчитывает общую стоимость заказа.
@@ -536,9 +605,11 @@ def calculate_total_cost(
         plates_total_with_vat += item_cost
         product_line_sums.append(_quantize_rub(item_cost))
 
+    from core.trip_counts import TripBucketInput, resolve_trip_counts
+
     trip_cost = max(0.0, float(logistics_cost or 0.0))
     cargo_kg = total_order_cargo_weight_kg(order_data, product_types={"plates"})
-    plate_delivery_total = delivery_service_charge_rub(trip_cost, cargo_kg)
+    plate_formula = cargo_delivery_trips_count(cargo_kg)
 
     pile_trip = max(0.0, float(pile_logistics_cost or 0.0))
     catalog_path = _resolve_pile_catalog_db_path(pile_catalog_db_path, db_path)
@@ -561,14 +632,17 @@ def calculate_total_cost(
             overrides=pile_trip_overrides,
             catalog_db_path=catalog_path,
         )
-    pile_delivery_total = (
-        round(pile_trip * pile_breakdown.total_trips, 2) if pile_breakdown.ready else 0.0
+    pile_present, pile_mass = _short_pile_presence(
+        order_data,
+        _pile_catalog_lookup(catalog_path),
+        long_enabled=long_enabled,
     )
-    fbs_lm_delivery_total = 0.0
+    pile_formula = pile_breakdown.total_trips if pile_breakdown.ready else 0
+
     fbs_lm_cargo_kg = 0.0
-    fbs_lm_trips = 0
     fbs_lm_delivery_ready = True
     fbs_lm_pending_marks: list[str] = []
+    fbs_input = TripBucketInput(present=False, ready=True, cargo_kg=0.0, formula=0)
     if fbs_lm_delivery_enabled:
         weight_path = _resolve_weight_catalog_db_path(weight_catalog_db_path, db_path)
         fbs_lm_breakdown = compute_fbs_lm_delivery(
@@ -577,12 +651,41 @@ def calculate_total_cost(
             catalog_db_path=weight_path,
         )
         fbs_lm_cargo_kg = fbs_lm_breakdown.cargo_kg
-        fbs_lm_trips = fbs_lm_breakdown.trips
         fbs_lm_delivery_ready = fbs_lm_breakdown.ready
         fbs_lm_pending_marks = list(fbs_lm_breakdown.pending_marks)
-        fbs_lm_delivery_total = (
-            round(trip_cost * fbs_lm_breakdown.trips, 2) if fbs_lm_breakdown.ready else 0.0
+        fbs_formula = fbs_lm_breakdown.trips if fbs_lm_breakdown.ready else 0
+        fbs_input = TripBucketInput(
+            present=_fbs_lm_present(order_data, fbs_lm_breakdown),
+            ready=fbs_lm_breakdown.ready,
+            cargo_kg=fbs_lm_cargo_kg,
+            formula=fbs_formula,
         )
+
+    resolved = resolve_trip_counts(
+        trip_counts,
+        plate=TripBucketInput(
+            present=_plates_present(order_data, cargo_kg),
+            ready=True,
+            cargo_kg=cargo_kg,
+            formula=plate_formula,
+        ),
+        pile=TripBucketInput(
+            present=pile_present,
+            ready=pile_breakdown.ready,
+            cargo_kg=pile_mass,
+            formula=pile_formula,
+        ),
+        fbs_lm=fbs_input,
+        overrides=accepted_trip_overrides,
+    )
+    plate_trips = resolved.accepted["plate"]
+    pile_trips = resolved.accepted["pile"]
+    fbs_lm_trips = resolved.accepted["fbs_lm"]
+    plate_delivery_total = round(trip_cost * plate_trips, 2)
+    pile_delivery_total = round(pile_trip * pile_trips, 2) if pile_breakdown.ready else 0.0
+    fbs_lm_delivery_total = (
+        round(trip_cost * fbs_lm_trips, 2) if fbs_lm_delivery_ready else 0.0
+    )
     delivery_total = (
         plate_delivery_total
         + pile_delivery_total
@@ -590,7 +693,6 @@ def calculate_total_cost(
         + long_pile_delivery_total
     )
     total_with_vat = round(plates_total_with_vat + delivery_total, 2)
-    plate_trips = cargo_delivery_trips_count(cargo_kg)
     if uses_per_line_included_vat(kp_id):
         delivery_lines = kp_delivery_export_lines(
             {
@@ -602,7 +704,7 @@ def calculate_total_cost(
                 "long_pile_lengths": long_pile_lengths,
                 "long_pile_delivery_enabled": long_enabled,
                 "plate_trips": plate_trips,
-                "pile_trips": pile_breakdown.total_trips,
+                "pile_trips": pile_trips,
                 "fbs_lm_trips": fbs_lm_trips,
             },
             plate_trip_cost=trip_cost,
@@ -621,13 +723,20 @@ def calculate_total_cost(
         "total_with_vat": total_with_vat,
         "plate_delivery_total": plate_delivery_total,
         "pile_delivery_total": pile_delivery_total,
-        "pile_trips": pile_breakdown.total_trips,
+        "pile_trips": pile_trips,
+        "pile_trips_formula": resolved.formula["pile"],
+        "pile_trips_notice": resolved.notice_for("pile"),
         "pile_trip_pending_marks": list(pile_breakdown.pending_marks),
         "pile_delivery_ready": pile_breakdown.ready,
         "plate_trips": plate_trips,
+        "plate_trips_formula": resolved.formula["plate"],
+        "plate_trips_notice": resolved.notice_for("plate"),
+        "trip_counts": resolved.stored,
         "fbs_lm_delivery_total": fbs_lm_delivery_total,
         "fbs_lm_cargo_kg": fbs_lm_cargo_kg,
         "fbs_lm_trips": fbs_lm_trips,
+        "fbs_lm_trips_formula": resolved.formula["fbs_lm"],
+        "fbs_lm_trips_notice": resolved.notice_for("fbs_lm"),
         "fbs_lm_delivery_ready": fbs_lm_delivery_ready,
         "fbs_lm_pending_marks": fbs_lm_pending_marks,
         "long_pile_delivery_enabled": long_enabled,

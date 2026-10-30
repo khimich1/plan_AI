@@ -20,6 +20,13 @@ import {
   targetSumFromDiscountPercent,
 } from "@/features/commercial-offer/lib/discountFromTargetSum";
 import { HighDiscountConfirmDialog } from "@/features/commercial-offer/components/HighDiscountConfirmDialog";
+import {
+  parseAcceptedTripCount,
+  TripCountField,
+  TripCountNotices,
+  type TripBucket,
+  type TripCountNotice,
+} from "@/features/commercial-offer/components/TripCountField";
 import { Alert } from "@/shared/ui/Alert";
 import { Button } from "@/shared/ui/Button";
 import { Card } from "@/shared/ui/Card";
@@ -114,6 +121,12 @@ type CalculationResultStepProps = {
   isUpdatingDiscount: boolean;
   onDiscountSubmit: (discountPercent: number) => Promise<void>;
   onLogisticsCostSubmit: (logisticsCost: number) => Promise<void>;
+  onTripCountSubmit?: (payload: {
+    plateTrips?: number;
+    pileTrips?: number;
+    fbsLmTrips?: number;
+    dismissTripNotices?: TripBucket[];
+  }) => Promise<void>;
   onPileDeliverySubmit?: (payload: {
     pileLogisticsCost?: number;
     pileTripOverrides?: Record<string, number>;
@@ -146,6 +159,7 @@ export const CalculationResultStep = ({
   isUpdatingDiscount,
   onDiscountSubmit,
   onLogisticsCostSubmit,
+  onTripCountSubmit,
   onPileDeliverySubmit,
   onAddOtherNomenclature,
   onUndoLastBatch,
@@ -165,6 +179,10 @@ export const CalculationResultStep = ({
   const [longTariffError, setLongTariffError] = useState<string | null>(null);
   const [logisticsError, setLogisticsError] = useState<string | null>(null);
   const [pileLogisticsError, setPileLogisticsError] = useState<string | null>(null);
+  const [plateTripsDraft, setPlateTripsDraft] = useState(String(draft.totals.plate_trips ?? 0));
+  const [pileTripsDraft, setPileTripsDraft] = useState(String(draft.totals.pile_trips ?? 0));
+  const [fbsTripsDraft, setFbsTripsDraft] = useState(String(draft.totals.fbs_lm_trips ?? 0));
+  const [tripCountError, setTripCountError] = useState<string | null>(null);
   const [discountError, setDiscountError] = useState<string | null>(null);
   const [targetSumError, setTargetSumError] = useState<string | null>(null);
   const [selectedPlateName, setSelectedPlateName] = useState<string | null>(null);
@@ -270,6 +288,13 @@ export const CalculationResultStep = ({
   useEffect(() => {
     setPileLogisticsCostDraft(String(draft.metadata.pile_logistics_cost ?? 0).replace(".", ","));
   }, [draft.metadata.pile_logistics_cost]);
+
+  useEffect(() => {
+    setPlateTripsDraft(String(draft.totals.plate_trips ?? 0));
+    setPileTripsDraft(String(draft.totals.pile_trips ?? 0));
+    setFbsTripsDraft(String(draft.totals.fbs_lm_trips ?? 0));
+    setTripCountError(null);
+  }, [draft.totals.plate_trips, draft.totals.pile_trips, draft.totals.fbs_lm_trips]);
 
   useEffect(() => {
     const next: Record<string, string> = {};
@@ -401,6 +426,37 @@ export const CalculationResultStep = ({
     }
     setLogisticsCostDraft(String(parsed).replace(".", ","));
   };
+
+  const applyTripCount = async (bucket: TripBucket, raw: string) => {
+    const parsed = parseAcceptedTripCount(raw);
+    if (parsed === null) {
+      setTripCountError("Число рейсов должно быть целым числом не меньше 0.");
+      return;
+    }
+    setTripCountError(null);
+    if (bucket === "plate") {
+      await onTripCountSubmit?.({ plateTrips: parsed });
+    } else if (bucket === "pile") {
+      await onTripCountSubmit?.({ pileTrips: parsed });
+    } else {
+      await onTripCountSubmit?.({ fbsLmTrips: parsed });
+    }
+  };
+
+  const dismissTripNotice = async (bucket: TripBucket) => {
+    await onTripCountSubmit?.({ dismissTripNotices: [bucket] });
+  };
+
+  const tripNotices: Array<{ bucket: TripBucket; notice: TripCountNotice }> = [];
+  if (draft.totals.plate_trips_notice && hasPlateLines) {
+    tripNotices.push({ bucket: "plate", notice: draft.totals.plate_trips_notice });
+  }
+  if (draft.totals.pile_trips_notice && hasPileLines && pileDeliveryReady) {
+    tripNotices.push({ bucket: "pile", notice: draft.totals.pile_trips_notice });
+  }
+  if (draft.totals.fbs_lm_trips_notice && hasFbsLmLines && fbsLmDeliveryReady) {
+    tripNotices.push({ bucket: "fbs_lm", notice: draft.totals.fbs_lm_trips_notice });
+  }
 
   const handleApplyPileLogisticsCost = async () => {
     const parsed = toNumber(pileLogisticsCostDraft);
@@ -688,6 +744,13 @@ export const CalculationResultStep = ({
     </Card>
 
     <Card title="Итоги и скидка">
+      <TripCountNotices
+        notices={tripNotices}
+        disabled={isUpdatingDiscount}
+        onDismiss={(bucket) => {
+          void dismissTripNotice(bucket);
+        }}
+      />
       <div
         style={{
           display: "grid",
@@ -737,10 +800,36 @@ export const CalculationResultStep = ({
                       fontSize: "0.8rem",
                     }}
                   >
-                    OK
-                  </Button>
+                  OK
+                </Button>
                 </div>
               </FieldWrapper>
+              {hasPlateLines ? (
+                <TripCountField
+                  bucket="plate"
+                  value={plateTripsDraft}
+                  formula={draft.totals.plate_trips_formula ?? null}
+                  error={tripCountError}
+                  disabled={isUpdatingDiscount}
+                  onChange={setPlateTripsDraft}
+                  onOk={() => {
+                    void applyTripCount("plate", plateTripsDraft);
+                  }}
+                />
+              ) : null}
+              {hasFbsLmLines && fbsLmDeliveryReady ? (
+                <TripCountField
+                  bucket="fbs_lm"
+                  value={fbsTripsDraft}
+                  formula={draft.totals.fbs_lm_trips_formula ?? null}
+                  error={tripCountError}
+                  disabled={isUpdatingDiscount}
+                  onChange={setFbsTripsDraft}
+                  onOk={() => {
+                    void applyTripCount("fbs_lm", fbsTripsDraft);
+                  }}
+                />
+              ) : null}
             </div>
           )}
           {hasPileLines && (
@@ -789,6 +878,19 @@ export const CalculationResultStep = ({
                   </Button>
                 </div>
               </FieldWrapper>
+              {pileDeliveryReady ? (
+                <TripCountField
+                  bucket="pile"
+                  value={pileTripsDraft}
+                  formula={draft.totals.pile_trips_formula ?? null}
+                  error={tripCountError}
+                  disabled={isUpdatingDiscount}
+                  onChange={setPileTripsDraft}
+                  onOk={() => {
+                    void applyTripCount("pile", pileTripsDraft);
+                  }}
+                />
+              ) : null}
             </div>
           )}
           {!hasPlateLines && !hasPileLines && !hasFbsLmLines && (

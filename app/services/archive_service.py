@@ -273,6 +273,10 @@ class ArchiveService:
         pile_logistics_cost: float | None = None,
         pile_trip_overrides: dict | None = None,
         long_pile_delivery: dict | None = None,
+        plate_trips: int | None = None,
+        pile_trips: int | None = None,
+        fbs_lm_trips: int | None = None,
+        dismiss_trip_notices: list[str] | None = None,
     ) -> ArchiveOfferDetails:
         """Обновляет тарифы рейсов и суммы заказа (без авто-PDF)."""
         raw = self.repository.get_by_id(kp_id)
@@ -286,6 +290,14 @@ class ArchiveService:
         }
         if long_pile_delivery is not None:
             logistics_kwargs["long_pile_delivery"] = long_pile_delivery
+        if plate_trips is not None:
+            logistics_kwargs["plate_trips"] = plate_trips
+        if pile_trips is not None:
+            logistics_kwargs["pile_trips"] = pile_trips
+        if fbs_lm_trips is not None:
+            logistics_kwargs["fbs_lm_trips"] = fbs_lm_trips
+        if dismiss_trip_notices:
+            logistics_kwargs["dismiss_trip_notices"] = dismiss_trip_notices
         if not self.repository.update_logistics_cost(
             kp_id,
             trip,
@@ -519,6 +531,7 @@ class ArchiveService:
                 raw.get("long_pile_delivery_enabled")
             ),
             long_pile_delivery=raw.get("long_pile_delivery_json"),
+            trip_counts=raw.get("trip_counts_json"),
             kp_id=int(kp_id) if kp_id is not None else None,
         )
 
@@ -1075,6 +1088,7 @@ class ArchiveService:
                 weight_catalog_db_path=self.repository.db_path,
                 long_pile_delivery_enabled=long_pile_delivery_enabled,
                 long_pile_delivery=long_pile_delivery,
+                trip_counts=raw.get("trip_counts_json"),
             )
             filename = f"КП_{kp_id}.pdf"
         elif kind in {"xlsx", "xlsx_delivery_in_unit"}:
@@ -1102,6 +1116,7 @@ class ArchiveService:
                 weight_catalog_db_path=self.repository.db_path,
                 long_pile_delivery_enabled=long_pile_delivery_enabled,
                 long_pile_delivery=long_pile_delivery,
+                trip_counts=raw.get("trip_counts_json"),
             )
             filename = (
                 f"КП_{kp_id}_с_доставкой_в_цене.xlsx"
@@ -1340,8 +1355,14 @@ class ArchiveService:
             weight_catalog_db_path=self.repository.db_path,
             long_pile_delivery_enabled=long_pile_enabled,
             long_pile_delivery=raw.get("long_pile_delivery_json"),
+            trip_counts=raw.get("trip_counts_json"),
             kp_id=kp_id,
         )
+        from core.trip_counts import dumps_trip_counts
+
+        fresh_trip_counts = dumps_trip_counts(totals.get("trip_counts"))
+        if kp_id and fresh_trip_counts != dumps_trip_counts(raw.get("trip_counts_json")):
+            self.repository.save_trip_counts_json(kp_id, fresh_trip_counts)
         # Delivery / cargo for archive details: plates 18600 + piles hybrid + ФБС/ЛС/ЛМ.
         total_cargo_weight_kg = float(
             total_order_cargo_weight_kg(order_data, product_types={"plates"})
@@ -1394,13 +1415,20 @@ class ArchiveService:
                 raw.get("pile_trip_overrides_json")
             ),
             pile_trips=int(totals.get("pile_trips") or 0),
+            pile_trips_formula=int(totals.get("pile_trips_formula") or 0),
+            pile_trips_notice=totals.get("pile_trips_notice"),
             pile_trip_pending_marks=list(totals.get("pile_trip_pending_marks") or []),
+            plate_trips=int(totals.get("plate_trips") or 0),
+            plate_trips_formula=int(totals.get("plate_trips_formula") or 0),
+            plate_trips_notice=totals.get("plate_trips_notice"),
             pile_delivery_ready=bool(totals.get("pile_delivery_ready", True)),
             plate_delivery_total=plate_delivery_total,
             pile_delivery_total=pile_delivery_total,
             fbs_lm_delivery_total=fbs_lm_delivery_total,
             fbs_lm_cargo_kg=float(totals.get("fbs_lm_cargo_kg") or 0.0),
             fbs_lm_trips=int(totals.get("fbs_lm_trips") or 0),
+            fbs_lm_trips_formula=int(totals.get("fbs_lm_trips_formula") or 0),
+            fbs_lm_trips_notice=totals.get("fbs_lm_trips_notice"),
             fbs_lm_delivery_ready=bool(totals.get("fbs_lm_delivery_ready", True)),
             fbs_lm_pending_marks=list(totals.get("fbs_lm_pending_marks") or []),
             fbs_lm_delivery_enabled=fbs_lm_enabled,

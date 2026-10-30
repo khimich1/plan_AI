@@ -101,7 +101,8 @@ def get_kp_by_id(kp_id: int, db_path: str = DEFAULT_DB) -> Optional[Dict]:
             "SELECT status, owner_user_id, paid_at, "
             "COALESCE(product_type, 'plates') AS product_type, "
             "pile_trip_overrides_json, fbs_lm_delivery_enabled, "
-            "long_pile_delivery_enabled, long_pile_delivery_json "
+            "long_pile_delivery_enabled, long_pile_delivery_json, "
+            "trip_counts_json "
             "FROM kp_meta WHERE kp_id = ?",
             (kp_id,),
         )
@@ -115,12 +116,14 @@ def get_kp_by_id(kp_id: int, db_path: str = DEFAULT_DB) -> Optional[Dict]:
             kp_data["fbs_lm_delivery_enabled"] = meta_row["fbs_lm_delivery_enabled"]
             kp_data["long_pile_delivery_enabled"] = meta_row["long_pile_delivery_enabled"]
             kp_data["long_pile_delivery_json"] = meta_row["long_pile_delivery_json"]
+            kp_data["trip_counts_json"] = meta_row["trip_counts_json"]
         else:
             kp_data["paid_at"] = None
             kp_data["product_type"] = "plates"
             kp_data["fbs_lm_delivery_enabled"] = 0
             kp_data["long_pile_delivery_enabled"] = 0
             kp_data["long_pile_delivery_json"] = None
+            kp_data["trip_counts_json"] = None
 
         product_type = str(kp_data.get("product_type") or "plates").lower()
         if product_type == "mixed":

@@ -381,6 +381,11 @@ def _init_schema_impl(db_path: str = DEFAULT_DB) -> None:
             cur.execute("ALTER TABLE kp_meta ADD COLUMN long_pile_delivery_json TEXT")
             print("[DB] ✅ Колонка long_pile_delivery_json добавлена в kp_meta")
 
+        if "trip_counts_json" not in meta_columns:
+            print("[DB] Миграция: добавляем колонку trip_counts_json в kp_meta...")
+            cur.execute("ALTER TABLE kp_meta ADD COLUMN trip_counts_json TEXT")
+            print("[DB] ✅ Колонка trip_counts_json добавлена в kp_meta")
+
         if "paid_at" not in meta_columns:
             print("[DB] Миграция: добавляем колонку paid_at в kp_meta...")
             cur.execute("ALTER TABLE kp_meta ADD COLUMN paid_at TEXT")

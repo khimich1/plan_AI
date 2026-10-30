@@ -46,6 +46,7 @@ def save_kp_to_db(
     fbs_lm_delivery_enabled: bool = False,
     long_pile_delivery_enabled: bool = False,
     long_pile_delivery: dict | None = None,
+    trip_counts: dict | None = None,
 ) -> int:
     """Сохраняет КП в базу.
 
@@ -76,6 +77,7 @@ def save_kp_to_db(
         fbs_lm_delivery_enabled=fbs_lm_delivery_enabled,
         long_pile_delivery_enabled=long_pile_delivery_enabled,
         long_pile_delivery=long_pile_delivery,
+        trip_counts=trip_counts,
     )
 
 
@@ -97,6 +99,7 @@ def update_kp_from_order_data(
     fbs_lm_delivery_enabled: bool | None = None,
     long_pile_delivery_enabled: bool | None = None,
     long_pile_delivery: dict | None = None,
+    trip_counts: dict | None = None,
 ) -> int:
     """Обновляет существующее КП (sync по line_id). Тот же ``kp_id``.
 
@@ -122,7 +125,20 @@ def update_kp_from_order_data(
         fbs_lm_delivery_enabled=fbs_lm_delivery_enabled,
         long_pile_delivery_enabled=long_pile_delivery_enabled,
         long_pile_delivery=long_pile_delivery,
+        trip_counts=trip_counts,
     )
+
+
+def save_trip_counts_json(kp_id: int, trip_counts_json: str, db_path: str = DEFAULT_DB) -> None:
+    conn = _connect(db_path)
+    try:
+        conn.execute(
+            "UPDATE kp_meta SET trip_counts_json = ? WHERE kp_id = ?",
+            (trip_counts_json, kp_id),
+        )
+        conn.commit()
+    finally:
+        conn.close()
 
 
 def update_kp_counterparty(
@@ -219,6 +235,12 @@ def update_kp_discount(kp_id: int, new_discount: float, db_path: str = DEFAULT_D
             return False
         current_discount = row[0] or 0.0
         logistics_saved = max(0.0, float(row[1] or 0.0))
+        cur.execute(
+            "SELECT trip_counts_json FROM kp_meta WHERE kp_id = ?",
+            (kp_id,),
+        )
+        trip_row = cur.fetchone()
+        stored_trips = trip_row[0] if trip_row else None
 
         cur.execute(
             "SELECT id, plate_name, length_m, width_m, load_class, qty, unit_weight, total_weight, discounted_price, unit_price, COALESCE(concrete_grade, '') AS concrete_grade FROM kp_plates WHERE kp_id = ? ORDER BY position_number",
@@ -265,7 +287,11 @@ def update_kp_discount(kp_id: int, new_discount: float, db_path: str = DEFAULT_D
             )
 
         totals = calculate_total_cost(
-            order_data, new_discount, logistics_cost=logistics_saved, kp_id=kp_id
+            order_data,
+            new_discount,
+            logistics_cost=logistics_saved,
+            kp_id=kp_id,
+            trip_counts=stored_trips,
         )
         subtotal = totals["subtotal"]
         vat_amount = totals["vat_amount"]
@@ -277,6 +303,12 @@ def update_kp_discount(kp_id: int, new_discount: float, db_path: str = DEFAULT_D
             WHERE kp_id = ?
         """,
             (new_discount, subtotal, vat_amount, total_amount, kp_id),
+        )
+        from core.trip_counts import dumps_trip_counts
+
+        cur.execute(
+            "UPDATE kp_meta SET trip_counts_json = ? WHERE kp_id = ?",
+            (dumps_trip_counts(totals.get("trip_counts")), kp_id),
         )
 
         for p in plates:
@@ -322,6 +354,10 @@ def update_kp_logistics_cost(
     pile_logistics_cost: float | None = None,
     pile_trip_overrides: dict | None = None,
     long_pile_delivery: dict | None = None,
+    plate_trips: int | None = None,
+    pile_trips: int | None = None,
+    fbs_lm_trips: int | None = None,
+    dismiss_trip_notices: list[str] | None = None,
 ) -> bool:
     """
     Обновляет тариф(ы) рейса и пересчитывает суммы KP_offers.
@@ -369,6 +405,23 @@ def update_kp_logistics_cost(
         if long_pile_delivery is None
         else long_pile_delivery
     )
+    from core.trip_counts import coerce_trip_counts, dismiss_trip_notices as drop_trip_notices
+    from core.trip_counts import dumps_trip_counts
+
+    stored_trips = coerce_trip_counts(kp_info.get("trip_counts_json"))
+    if dismiss_trip_notices:
+        stored_trips = drop_trip_notices(stored_trips, dismiss_trip_notices)
+    accepted_overrides: dict[str, int] = {}
+    for bucket, explicit in (
+        ("plate", plate_trips),
+        ("pile", pile_trips),
+        ("fbs_lm", fbs_lm_trips),
+    ):
+        if explicit is None:
+            continue
+        if isinstance(explicit, bool) or not isinstance(explicit, int) or explicit < 0:
+            return False
+        accepted_overrides[bucket] = explicit
 
     totals = calculate_total_cost(
         order_data,
@@ -387,6 +440,8 @@ def update_kp_logistics_cost(
             kp_info.get("long_pile_delivery_enabled")
         ),
         long_pile_delivery=resolved_long_pile,
+        trip_counts=stored_trips,
+        accepted_trip_overrides=accepted_overrides or None,
         kp_id=kp_id,
     )
 
@@ -413,12 +468,14 @@ def update_kp_logistics_cost(
         cur.execute(
             """
             UPDATE kp_meta
-            SET pile_trip_overrides_json = ?, long_pile_delivery_json = ?
+            SET pile_trip_overrides_json = ?, long_pile_delivery_json = ?,
+                trip_counts_json = ?
             WHERE kp_id = ?
             """,
             (
                 dumps_pile_trip_overrides(resolved_overrides),
                 dumps_long_pile_delivery(resolved_long_pile),
+                dumps_trip_counts(totals.get("trip_counts")),
                 kp_id,
             ),
         )

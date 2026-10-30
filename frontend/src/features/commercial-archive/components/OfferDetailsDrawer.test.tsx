@@ -1788,3 +1788,132 @@ describe("OfferDetailsDrawer invoice warehouse", () => {
     });
   });
 });
+
+describe("OfferDetailsDrawer manual trip count", () => {
+  afterEach(() => {
+    cleanup();
+    vi.clearAllMocks();
+  });
+
+  it("applies a plate trip count through the logistics patch", async () => {
+    mockLogisticsMutateAsync.mockResolvedValue(undefined);
+    mockUseArchiveOfferQuery.mockReturnValue({
+      data: makeOffer("в архиве", null, {
+        logistics_cost: 2000,
+        plate_trips: 12,
+        plate_trips_formula: 12,
+        plates: [
+          {
+            position_number: 1,
+            plate_name: "ПБ",
+            length_m: 6,
+            width_m: 1.2,
+            load_class: 800,
+            qty: 1,
+            unit_price: 100,
+            discounted_price: 100,
+            unit_weight: 1000,
+            total_weight: 1000,
+            status: null,
+          },
+        ],
+      }),
+      isPending: false,
+      isError: false,
+      error: null,
+    });
+
+    render(<OfferDetailsDrawer open kpId={42} onClose={vi.fn()} />);
+    const input = screen.getByRole("textbox", { name: "Кол. рейсов плит" });
+    expect(input).toHaveValue("12");
+    fireEvent.change(input, { target: { value: "10" } });
+    expect(screen.getByText("по весу: 12")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "OK Кол. рейсов плит" }));
+    expect(mockLogisticsMutateAsync).toHaveBeenCalledWith(
+      expect.objectContaining({ kpId: 42, logisticsCost: 2000, plateTrips: 10 }),
+    );
+  });
+
+  it("shows two notices and does not clear the other when one is dismissed", () => {
+    mockLogisticsMutateAsync.mockResolvedValue(undefined);
+    mockUseArchiveOfferQuery.mockReturnValue({
+      data: makeOffer("в архиве", null, {
+        logistics_cost: 2000,
+        plate_trips: 12,
+        plate_trips_formula: 12,
+        plate_trips_notice: { previous: 10, next: 12 },
+        fbs_lm_delivery_enabled: true,
+        fbs_lm_delivery_ready: true,
+        fbs_lm_trips: 1,
+        fbs_lm_trips_formula: 1,
+        fbs_lm_trips_notice: { previous: 2, next: 1 },
+        plates: [
+          {
+            position_number: 1,
+            plate_name: "ПБ",
+            length_m: 6,
+            width_m: 1.2,
+            load_class: 800,
+            qty: 1,
+            unit_price: 100,
+            discounted_price: 100,
+            unit_weight: 1000,
+            total_weight: 1000,
+            status: null,
+          },
+        ],
+        fbs: [
+          {
+            position_number: 2,
+            mark: "ФБС 24.4.6-Т",
+            concrete_grade: "",
+            qty: 4,
+            unit_price: 10,
+            discounted_price: 10,
+          },
+        ],
+      }),
+      isPending: false,
+      isError: false,
+      error: null,
+    });
+
+    render(<OfferDetailsDrawer open kpId={42} onClose={vi.fn()} />);
+    expect(screen.getByText("Рейсы плит пересчитаны: было 10, стало 12")).toBeInTheDocument();
+    expect(screen.getByText("Рейсы ФБС/ЛС/ЛМ пересчитаны: было 2, стало 1")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Закрыть напоминание о рейсах плит" }));
+    expect(mockLogisticsMutateAsync).toHaveBeenCalledWith(
+      expect.objectContaining({ dismissTripNotices: ["plate"] }),
+    );
+    expect(screen.getByText("Рейсы ФБС/ЛС/ЛМ пересчитаны: было 2, стало 1")).toBeInTheDocument();
+  });
+
+  it("hides the trip field while FBS weight is missing", () => {
+    mockUseArchiveOfferQuery.mockReturnValue({
+      data: makeOffer("в архиве", null, {
+        product_type: "fbs",
+        fbs_lm_delivery_enabled: true,
+        fbs_lm_delivery_ready: false,
+        fbs_lm_trips: 0,
+        fbs_lm_pending_marks: ["ЛС99"],
+        fbs: [
+          {
+            position_number: 1,
+            mark: "ЛС99",
+            concrete_grade: "",
+            qty: 4,
+            unit_price: 800,
+            discounted_price: 800,
+          },
+        ],
+      }),
+      isPending: false,
+      isError: false,
+      error: null,
+    });
+
+    render(<OfferDetailsDrawer open kpId={42} onClose={vi.fn()} />);
+    expect(screen.getByText("Нет веса в справочнике — доставка ФБС/ЛС/ЛМ не посчитана")).toBeInTheDocument();
+    expect(screen.queryByRole("textbox", { name: "Кол. рейсов ФБС/ЛС/ЛМ" })).not.toBeInTheDocument();
+  });
+});

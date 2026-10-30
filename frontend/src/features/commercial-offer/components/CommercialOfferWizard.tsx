@@ -1051,6 +1051,35 @@ export const CommercialOfferWizard = ({ productType: productTypeProp }: { produc
     }
   };
 
+  const handleTripCountSubmit = async (payload: {
+    plateTrips?: number;
+    pileTrips?: number;
+    fbsLmTrips?: number;
+    dismissTripNotices?: Array<"plate" | "pile" | "fbs_lm">;
+  }) => {
+    if (!currentDraft?.draft_id) {
+      return;
+    }
+    setStepError(null);
+    try {
+      await updateMetaMutation.mutateAsync({
+        draftId: currentDraft.draft_id,
+        plateTrips: payload.plateTrips,
+        pileTrips: payload.pileTrips,
+        fbsLmTrips: payload.fbsLmTrips,
+        dismissTripNotices: payload.dismissTripNotices,
+      });
+      const calculated = await calculateMutation.mutateAsync(currentDraft.draft_id);
+      dispatch({ type: "hydrate-draft", payload: calculated });
+      const msgs = (calculated.wizard_state.validation_errors ?? []).filter(Boolean);
+      if (msgs.length > 0) {
+        setStepError(msgs.join(" "));
+      }
+    } catch (error) {
+      setStepError(getErrorMessage(error));
+    }
+  };
+
   const handlePileDeliverySubmit = async (payload: {
     pileLogisticsCost?: number;
     pileTripOverrides?: Record<string, number>;
@@ -1692,6 +1721,7 @@ export const CommercialOfferWizard = ({ productType: productTypeProp }: { produc
         isUpdatingDiscount={updateMetaMutation.isPending || calculateMutation.isPending}
         onDiscountSubmit={handleDiscountSubmit}
         onLogisticsCostSubmit={handleLogisticsCostSubmit}
+        onTripCountSubmit={handleTripCountSubmit}
         onPileDeliverySubmit={handlePileDeliverySubmit}
         onAddOtherNomenclature={handleAddOtherNomenclature}
         onUndoLastBatch={() => void handleUndoLastBatch()}

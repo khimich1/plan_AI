@@ -28,6 +28,27 @@ from core.pile_trip_pricing import (
     long_pile_delivery_for_metadata,
 )
 from core.plate_order_context import PlateOrderContext
+from core.trip_counts import dumps_trip_counts
+
+
+def _accepted_trip_overrides(
+    *,
+    plate_trips: int | None,
+    pile_trips: int | None,
+    fbs_lm_trips: int | None,
+) -> dict[str, int]:
+    overrides: dict[str, int] = {}
+    for bucket, value in (
+        ("plate", plate_trips),
+        ("pile", pile_trips),
+        ("fbs_lm", fbs_lm_trips),
+    ):
+        if value is None:
+            continue
+        if isinstance(value, bool) or not isinstance(value, int) or value < 0:
+            raise ValueError("Число рейсов должно быть целым числом не меньше 0.")
+        overrides[bucket] = value
+    return overrides
 
 _PRODUCT_TYPE_TO_WIZARD_STEP = {key: spec.wizard_step for key, spec in SPECS.items()}
 logger = logging.getLogger(__name__)
@@ -576,6 +597,10 @@ class CommercialDraftLifecycle:
         long_pile_delivery: dict | None = None,
         counterparty_id: int | None = None,
         client_inn: str | None = None,
+        plate_trips: int | None = None,
+        pile_trips: int | None = None,
+        fbs_lm_trips: int | None = None,
+        dismiss_trip_notices: list[str] | None = None,
     ) -> dict[str, Any]:
         payload_before = self._wf._load_draft_or_raise(draft_id)
         prev_step = self._wf._normalize_stored_step(dict(payload_before.get("metadata") or {}))
@@ -622,6 +647,21 @@ class CommercialDraftLifecycle:
             updates["pile_trip_overrides"] = coerce_pile_trip_overrides(pile_trip_overrides)
         if long_pile_delivery is not None:
             updates["long_pile_delivery"] = long_pile_delivery_for_metadata(long_pile_delivery)
+        trip_overrides = _accepted_trip_overrides(
+            plate_trips=plate_trips,
+            pile_trips=pile_trips,
+            fbs_lm_trips=fbs_lm_trips,
+        )
+        if trip_overrides:
+            previous = dict(payload_before.get("metadata") or {}).get("accepted_trip_overrides") or {}
+            if not isinstance(previous, dict):
+                previous = {}
+            updates["accepted_trip_overrides"] = {**previous, **trip_overrides}
+        if dismiss_trip_notices:
+            from core.trip_counts import dismiss_trip_notices as drop_trip_notices
+
+            current_counts = dict(payload_before.get("metadata") or {}).get("trip_counts")
+            updates["trip_counts"] = drop_trip_notices(current_counts, dismiss_trip_notices)
         if counterparty_id is not None:
             row = CounterpartiesService(
                 db_path=self._wf.kp_repository.db_path
@@ -641,6 +681,8 @@ class CommercialDraftLifecycle:
             "pile_logistics_cost",
             "pile_trip_overrides",
             "long_pile_delivery",
+            "trip_counts",
+            "accepted_trip_overrides",
         }
         if updates:
             if prev_step == WizardStepId.result and set(updates.keys()).issubset(financial_keys):
@@ -772,6 +814,18 @@ class CommercialDraftLifecycle:
             payload["order_data"],
             metadata,
         )
+        resolved_counts = totals.get("trip_counts")
+        counts_changed = dumps_trip_counts(resolved_counts) != dumps_trip_counts(
+            metadata.get("trip_counts")
+        )
+        if counts_changed or metadata.get("accepted_trip_overrides"):
+            self._wf.draft_store.update_metadata(
+                draft_id,
+                trip_counts=resolved_counts,
+                accepted_trip_overrides=None,
+            )
+            metadata["trip_counts"] = resolved_counts
+            metadata["accepted_trip_overrides"] = None
         public_metadata = {
             key: value
             for key, value in metadata.items()
@@ -870,6 +924,7 @@ class CommercialDraftLifecycle:
             "long_pile_delivery": long_pile_delivery_for_metadata(
                 kp_raw.get("long_pile_delivery_json")
             ),
+            "trip_counts": kp_raw.get("trip_counts_json"),
             "delivery_conditions": delivery,
             "payment_conditions": payment,
             "conditions_mode": conditions_mode,
@@ -994,6 +1049,7 @@ class CommercialDraftLifecycle:
                 fbs_lm_delivery_enabled=fbs_lm_delivery_enabled,
                 long_pile_delivery_enabled=long_pile_delivery_enabled,
                 long_pile_delivery=long_pile_delivery,
+                trip_counts=metadata.get("trip_counts"),
                 delivery_conditions=delivery_conditions,
                 payment_conditions=payment_conditions,
                 execution_terms=execution_terms,
@@ -1035,6 +1091,7 @@ class CommercialDraftLifecycle:
                 fbs_lm_delivery_enabled=fbs_lm_delivery_enabled,
                 long_pile_delivery_enabled=long_pile_delivery_enabled,
                 long_pile_delivery=long_pile_delivery,
+                trip_counts=metadata.get("trip_counts"),
                 delivery_conditions=delivery_conditions,
                 payment_conditions=payment_conditions,
                 execution_terms=execution_terms,

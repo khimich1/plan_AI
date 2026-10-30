@@ -4,6 +4,8 @@ from core.cargo_delivery_pricing import (
     delivery_service_charge_rub,
     total_order_cargo_weight_kg,
 )
+from core.commercial_pricing import kp_delivery_export_lines
+from core.trip_counts import TripBucketInput, dismiss_trip_notices, resolve_trip_counts
 from core.commercial_offer import calculate_total_cost as calculate_total_cost_pdf
 from core.commercial_offer_xlsx import calculate_total_cost as calculate_total_cost_xlsx
 from core.commercial_pricing import calculate_total_cost as calculate_total_cost_core
@@ -422,3 +424,330 @@ def test_calculate_total_cost_mixed_sums_two_deliveries(tmp_path) -> None:
     assert totals["pile_delivery_total"] == 200.0
     products = 65 * 10.0 + 3 * 100.0
     assert totals["total_with_vat"] == products + plate_delivery + 200.0
+
+
+def _bucket(present: bool, ready: bool, cargo_kg: float, formula: int) -> TripBucketInput:
+    return TripBucketInput(present=present, ready=ready, cargo_kg=cargo_kg, formula=formula)
+
+
+def _idle_bucket() -> TripBucketInput:
+    return _bucket(False, True, 0.0, 0)
+
+
+def test_resolve_plate_215220_kg_is_12_trips_without_notice() -> None:
+    resolved = resolve_trip_counts(
+        None,
+        plate=_bucket(True, True, 215_220.0, 12),
+        pile=_idle_bucket(),
+        fbs_lm=_idle_bucket(),
+    )
+    assert cargo_delivery_trips_count(215_220.0) == 12
+    assert resolved.accepted["plate"] == 12
+    assert resolved.formula["plate"] == 12
+    assert resolved.notice_for("plate") is None
+    assert resolved.stored["plate"] == {
+        "accepted": 12,
+        "basis_kg": 215_220.0,
+        "formula": 12,
+    }
+    assert resolved.stored["notices"] == []
+
+
+def test_resolve_explicit_zero_is_kept_and_garbage_json_is_missing_key() -> None:
+    resolved = resolve_trip_counts(
+        "not-json",
+        plate=_bucket(True, True, 215_220.0, 12),
+        pile=_idle_bucket(),
+        fbs_lm=_idle_bucket(),
+        overrides={"plate": 0},
+    )
+    assert resolved.accepted["plate"] == 0
+    assert resolved.notice_for("plate") is None
+    assert resolved.stored["plate"]["accepted"] == 0
+    assert resolved.stored["plate"]["formula"] == 12
+
+
+def test_resolve_mass_step_replaces_manual_even_when_formula_integer_is_unchanged() -> None:
+    stored = {
+        "plate": {"accepted": 10, "basis_kg": 215_220.0, "formula": 12},
+        "notices": [],
+    }
+    resolved = resolve_trip_counts(
+        stored,
+        plate=_bucket(True, True, 216_000.0, 12),
+        pile=_idle_bucket(),
+        fbs_lm=_idle_bucket(),
+        overrides={"plate": 7},
+    )
+    assert resolved.accepted["plate"] == 12
+    assert resolved.notice_for("plate") == {"previous": 10, "next": 12}
+    assert resolved.stored["plate"]["basis_kg"] == 216_000.0
+    assert resolved.stored["plate"]["accepted"] == 12
+
+
+def test_resolve_same_mass_keeps_manual_and_epsilon_does_not_reset() -> None:
+    stored = {
+        "plate": {"accepted": 10, "basis_kg": 215_220.0, "formula": 12},
+        "notices": [{"bucket": "plate", "previous": 4, "next": 10}],
+    }
+    same = resolve_trip_counts(
+        stored,
+        plate=_bucket(True, True, 215_220.0, 12),
+        pile=_idle_bucket(),
+        fbs_lm=_idle_bucket(),
+    )
+    assert same.accepted["plate"] == 10
+    assert same.notice_for("plate") == {"previous": 4, "next": 10}
+
+    tiny = resolve_trip_counts(
+        stored,
+        plate=_bucket(True, True, 215_220.01, 12),
+        pile=_idle_bucket(),
+        fbs_lm=_idle_bucket(),
+    )
+    assert tiny.accepted["plate"] == 10
+    assert tiny.stored["plate"]["basis_kg"] == 215_220.0
+
+
+def test_resolve_formula_growth_replaces_that_bucket_notice_only() -> None:
+    stored = {
+        "plate": {"accepted": 12, "basis_kg": 215_220.0, "formula": 12},
+        "fbs_lm": {"accepted": 1, "basis_kg": 15_000.0, "formula": 1},
+        "notices": [{"bucket": "pile", "previous": 1, "next": 2}],
+    }
+    resolved = resolve_trip_counts(
+        stored,
+        plate=_bucket(True, True, 215_220.0 + 18_600.0, 13),
+        pile=_idle_bucket(),
+        fbs_lm=_bucket(True, True, 15_000.0, 1),
+    )
+    assert resolved.accepted["plate"] == 13
+    assert resolved.notice_for("plate") == {"previous": 12, "next": 13}
+    assert resolved.accepted["fbs_lm"] == 1
+    assert resolved.notice_for("fbs_lm") is None
+    # Чужой котёл не в заказе — его старое напоминание не трогаем.
+    assert any(row["bucket"] == "pile" for row in resolved.stored["notices"])
+
+
+def test_resolve_two_buckets_keep_two_notices_and_dismiss_does_not_change_accepted() -> None:
+    stored = {
+        "plate": {"accepted": 10, "basis_kg": 100.0, "formula": 12},
+        "fbs_lm": {"accepted": 2, "basis_kg": 100.0, "formula": 1},
+        "notices": [],
+    }
+    resolved = resolve_trip_counts(
+        stored,
+        plate=_bucket(True, True, 215_220.0, 12),
+        pile=_idle_bucket(),
+        fbs_lm=_bucket(True, True, 15_000.0, 1),
+    )
+    assert resolved.notice_for("plate") == {"previous": 10, "next": 12}
+    assert resolved.notice_for("fbs_lm") == {"previous": 2, "next": 1}
+    dismissed = dismiss_trip_notices(resolved.stored, ["plate"])
+    assert dismissed["plate"]["accepted"] == 12
+    assert dismissed["fbs_lm"]["accepted"] == 1
+    assert [row["bucket"] for row in dismissed["notices"]] == ["fbs_lm"]
+
+
+def test_resolve_not_ready_drops_key_so_next_ready_is_first_fill() -> None:
+    stored = {
+        "pile": {"accepted": 4, "basis_kg": 40_000.0, "formula": 2},
+        "notices": [{"bucket": "pile", "previous": 4, "next": 2}],
+    }
+    pending = resolve_trip_counts(
+        stored,
+        plate=_idle_bucket(),
+        pile=_bucket(True, False, 40_000.0, 2),
+        fbs_lm=_idle_bucket(),
+    )
+    assert pending.accepted["pile"] == 0
+    assert "pile" not in pending.stored
+    assert pending.stored["notices"] == []
+
+    ready = resolve_trip_counts(
+        pending.stored,
+        plate=_idle_bucket(),
+        pile=_bucket(True, True, 50_000.0, 3),
+        fbs_lm=_idle_bucket(),
+    )
+    assert ready.accepted["pile"] == 3
+    assert ready.notice_for("pile") is None
+
+
+def _plate_order() -> list[dict]:
+    return [
+        {
+            "name": "ПБ",
+            "product_type": "plates",
+            "qty": 1,
+            "unit_price": 100.0,
+            "length_m": 6.0,
+            "width_m": 1.2,
+        }
+    ]
+
+
+def test_calculate_total_cost_manual_plate_trips_and_tariff_does_not_reset(tmp_path) -> None:
+    db_path = fx.make_iso_db(tmp_path)
+    order = _plate_order()
+    kg = total_order_cargo_weight_kg(order, product_types={"plates"})
+    formula = cargo_delivery_trips_count(kg)
+    stored = {
+        "plate": {"accepted": 10, "basis_kg": kg, "formula": formula},
+        "notices": [],
+    }
+    manual = calculate_total_cost_core(
+        order,
+        0,
+        logistics_cost=2_000.0,
+        db_path=db_path,
+        require_all_priced=False,
+        trip_counts=stored,
+    )
+    assert manual["plate_trips"] == 10
+    assert manual["plate_trips_formula"] == formula
+    assert manual["plate_trips_notice"] is None
+    assert manual["plate_delivery_total"] == 20_000.0
+    lines = kp_delivery_export_lines(
+        manual, plate_trip_cost=2_000.0, pile_trip_cost=0.0
+    )
+    assert lines[0]["trips"] == 10
+    assert lines[0]["amount"] == 20_000.0
+
+    retariff = calculate_total_cost_core(
+        order,
+        0,
+        logistics_cost=3_000.0,
+        db_path=db_path,
+        require_all_priced=False,
+        trip_counts=manual["trip_counts"],
+    )
+    assert retariff["plate_trips"] == 10
+    assert retariff["plate_delivery_total"] == 30_000.0
+    assert retariff["plate_trips_notice"] is None
+
+    zero = calculate_total_cost_core(
+        order,
+        0,
+        logistics_cost=2_000.0,
+        db_path=db_path,
+        require_all_priced=False,
+        trip_counts={
+            "plate": {"accepted": 0, "basis_kg": kg, "formula": formula},
+            "notices": [],
+        },
+    )
+    assert zero["plate_delivery_total"] == 0.0
+    assert kp_delivery_export_lines(zero, plate_trip_cost=2_000.0, pile_trip_cost=0.0) == []
+
+
+def test_calculate_total_cost_without_trip_counts_matches_formula(tmp_path) -> None:
+    db_path = fx.make_iso_db(tmp_path)
+    order = _plate_order()
+    kg = total_order_cargo_weight_kg(order, product_types={"plates"})
+    formula = cargo_delivery_trips_count(kg)
+    bare = calculate_total_cost_core(
+        order,
+        0,
+        logistics_cost=2_000.0,
+        db_path=db_path,
+        require_all_priced=False,
+    )
+    charged = delivery_service_charge_rub(2_000.0, kg)
+    assert bare["plate_trips"] == formula
+    assert bare["plate_trips_formula"] == formula
+    assert bare["plate_trips_notice"] is None
+    assert bare["plate_delivery_total"] == charged
+    assert bare["trip_counts"]["notices"] == []
+    assert bare["trip_counts"]["plate"]["accepted"] == formula
+
+
+def test_calculate_total_cost_pending_pile_ignores_accepted_count(tmp_path) -> None:
+    db_path = _seed_mini_pile_catalog(tmp_path)
+    order_data = [
+        {
+            "name": "C18-40T8",
+            "mark": "C18-40T8",
+            "product_type": "bridge_piles",
+            "qty": 49,
+            "unit_price": 10.0,
+        }
+    ]
+    totals = calculate_total_cost_core(
+        order_data,
+        0,
+        logistics_cost=0,
+        db_path=db_path,
+        require_all_priced=False,
+        pile_logistics_cost=1_000.0,
+        pile_catalog_db_path=db_path,
+        trip_counts={
+            "pile": {"accepted": 5, "basis_kg": 1.0, "formula": 1},
+            "notices": [{"bucket": "pile", "previous": 5, "next": 1}],
+        },
+    )
+    assert totals["pile_delivery_ready"] is False
+    assert totals["pile_trips"] == 0
+    assert totals["pile_delivery_total"] == 0.0
+    assert totals["total_with_vat"] == 490.0
+    assert "pile" not in totals["trip_counts"]
+    assert totals["trip_counts"]["notices"] == []
+
+
+def test_calculate_total_cost_short_pile_manual_trips_use_pile_tariff(tmp_path) -> None:
+    db_path = _seed_mini_pile_catalog(tmp_path)
+    order_data = [
+        {
+            "name": "С60.30",
+            "mark": "С60.30",
+            "product_type": "piles",
+            "qty": 14,
+            "unit_price": 50.0,
+        }
+    ]
+    probed = calculate_total_cost_core(
+        order_data,
+        0,
+        logistics_cost=999.0,
+        db_path=db_path,
+        require_all_priced=False,
+        pile_logistics_cost=1_000.0,
+        pile_catalog_db_path=db_path,
+    )
+    basis = probed["trip_counts"]["pile"]["basis_kg"]
+    formula = probed["pile_trips_formula"]
+    assert formula == 1
+    manual = calculate_total_cost_core(
+        order_data,
+        0,
+        logistics_cost=999.0,
+        db_path=db_path,
+        require_all_priced=False,
+        pile_logistics_cost=1_000.0,
+        pile_catalog_db_path=db_path,
+        trip_counts={
+            "pile": {"accepted": 3, "basis_kg": basis, "formula": formula},
+            "notices": [],
+        },
+    )
+    assert manual["pile_trips"] == 3
+    assert manual["pile_delivery_total"] == 3_000.0
+    assert manual["pile_trips_notice"] is None
+    assert manual["total_with_vat"] == 14 * 50.0 + 3_000.0
+
+    shifted = calculate_total_cost_core(
+        order_data,
+        0,
+        logistics_cost=999.0,
+        db_path=db_path,
+        require_all_priced=False,
+        pile_logistics_cost=2_000.0,
+        pile_catalog_db_path=db_path,
+        trip_counts={
+            "pile": {"accepted": 3, "basis_kg": basis + 1.0, "formula": formula},
+            "notices": [],
+        },
+    )
+    assert shifted["pile_trips"] == formula
+    assert shifted["pile_trips_notice"] == {"previous": 3, "next": formula}
+    assert shifted["pile_delivery_total"] == round(2_000.0 * formula, 2)

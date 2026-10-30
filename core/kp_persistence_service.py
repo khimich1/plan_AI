@@ -11,6 +11,7 @@ from core.pile_trip_pricing import (
     dumps_long_pile_delivery,
     dumps_pile_trip_overrides,
 )
+from core.trip_counts import dumps_trip_counts as _dumps_trip_counts
 
 _VALID_PRODUCT_TYPES = frozenset(
     {
@@ -158,9 +159,11 @@ class KpPersistenceService:
         fbs_lm_delivery_enabled: bool = False,
         long_pile_delivery_enabled: bool = False,
         long_pile_delivery: Any = None,
+        trip_counts: Any = None,
     ) -> int:
         trip_logistics = max(0.0, float(logistics_cost or 0.0))
         pile_trip = max(0.0, float(pile_logistics_cost or 0.0))
+        stored_trip_counts = trip_counts
         from core.commercial_pricing import (
             coerce_fbs_lm_delivery_enabled,
             coerce_long_pile_delivery_enabled,
@@ -184,8 +187,10 @@ class KpPersistenceService:
                 weight_catalog_db_path=db_path,
                 long_pile_delivery_enabled=long_pile_flag,
                 long_pile_delivery=long_pile_delivery,
+                trip_counts=stored_trip_counts,
                 kp_id=None,
             )
+            stored_trip_counts = totals.get("trip_counts")
             subtotal = totals["subtotal"]
             vat_amount = totals["vat_amount"]
             total_amount = totals["total_with_vat"]
@@ -259,8 +264,10 @@ class KpPersistenceService:
                     weight_catalog_db_path=db_path,
                     long_pile_delivery_enabled=long_pile_flag,
                     long_pile_delivery=long_pile_delivery,
+                    trip_counts=stored_trip_counts,
                     kp_id=int(kp_id),
                 )
+                stored_trip_counts = totals.get("trip_counts")
                 cur.execute(
                     """
                     UPDATE KP_offers
@@ -307,8 +314,9 @@ class KpPersistenceService:
                 INSERT INTO kp_meta (
                     kp_id, status, owner_user_id, product_type,
                     pile_trip_overrides_json, fbs_lm_delivery_enabled,
-                    long_pile_delivery_enabled, long_pile_delivery_json
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                    long_pile_delivery_enabled, long_pile_delivery_json,
+                    trip_counts_json
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     kp_id,
@@ -319,6 +327,7 @@ class KpPersistenceService:
                     1 if fbs_lm_flag else 0,
                     1 if long_pile_flag else 0,
                     dumps_long_pile_delivery(long_pile_delivery),
+                    _dumps_trip_counts(stored_trip_counts),
                 ),
             )
             conn.commit()
@@ -345,6 +354,7 @@ class KpPersistenceService:
         fbs_lm_delivery_enabled: bool | None = None,
         long_pile_delivery_enabled: bool | None = None,
         long_pile_delivery: Any = None,
+        trip_counts: Any = None,
     ) -> int:
         """Sync existing KP lines by ``line_id`` (append/update; same ``kp_id``).
 
@@ -428,7 +438,8 @@ class KpPersistenceService:
             cur.execute(
                 """
                 SELECT pile_trip_overrides_json, fbs_lm_delivery_enabled,
-                       long_pile_delivery_enabled, long_pile_delivery_json
+                       long_pile_delivery_enabled, long_pile_delivery_json,
+                       trip_counts_json
                 FROM kp_meta WHERE kp_id = ?
                 """,
                 (kp_id,),
@@ -467,6 +478,10 @@ class KpPersistenceService:
             resolved_long_json = (
                 existing_long_json if long_pile_delivery is None else long_pile_delivery
             )
+            existing_trip_counts = meta_overrides_row[4] if meta_overrides_row else None
+            resolved_trip_counts = (
+                existing_trip_counts if trip_counts is None else trip_counts
+            )
 
             try:
                 from core.commercial_pricing import calculate_total_cost
@@ -484,8 +499,10 @@ class KpPersistenceService:
                     weight_catalog_db_path=db_path,
                     long_pile_delivery_enabled=resolved_long_pile,
                     long_pile_delivery=resolved_long_json,
+                    trip_counts=resolved_trip_counts,
                     kp_id=kp_id,
                 )
+                resolved_trip_counts = totals.get("trip_counts")
                 subtotal = totals["subtotal"]
                 vat_amount = totals["vat_amount"]
                 total_amount = totals["total_with_vat"]
@@ -610,7 +627,8 @@ class KpPersistenceService:
                 """
                 UPDATE kp_meta
                 SET pile_trip_overrides_json = ?, product_type = ?, fbs_lm_delivery_enabled = ?,
-                    long_pile_delivery_enabled = ?, long_pile_delivery_json = ?
+                    long_pile_delivery_enabled = ?, long_pile_delivery_json = ?,
+                    trip_counts_json = ?
                 WHERE kp_id = ?
                 """,
                 (
@@ -619,6 +637,7 @@ class KpPersistenceService:
                     1 if resolved_fbs_lm else 0,
                     1 if resolved_long_pile else 0,
                     dumps_long_pile_delivery(resolved_long_json),
+                    _dumps_trip_counts(resolved_trip_counts),
                     kp_id,
                 ),
             )

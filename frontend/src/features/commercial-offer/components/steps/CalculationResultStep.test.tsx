@@ -33,6 +33,12 @@ type ResultStepAppendHandlers = {
     pileTripOverrides?: Record<string, number>;
     longPileDelivery?: Record<string, { trip_cost: number }>;
   }) => Promise<void>;
+  onTripCountSubmit?: (payload: {
+    plateTrips?: number;
+    pileTrips?: number;
+    fbsLmTrips?: number;
+    dismissTripNotices?: Array<"plate" | "pile" | "fbs_lm">;
+  }) => Promise<void>;
 };
 
 const baseWizardState = {
@@ -131,6 +137,7 @@ function renderResultStep(
   const onUndoLastBatch = handlers.onUndoLastBatch ?? vi.fn();
   const onDeleteLine = handlers.onDeleteLine ?? vi.fn();
   const onPileDeliverySubmit = handlers.onPileDeliverySubmit ?? vi.fn(async () => undefined);
+  const onTripCountSubmit = handlers.onTripCountSubmit ?? vi.fn(async () => undefined);
   const onLogisticsCostSubmit = vi.fn(async () => undefined);
   const { breakdownTables = [], isBreakdownLoading = false, ...flags } = stepFlags;
 
@@ -156,6 +163,7 @@ function renderResultStep(
     onUndoLastBatch,
     onDeleteLine,
     onPileDeliverySubmit,
+    onTripCountSubmit,
     ...flags,
   };
 
@@ -167,6 +175,7 @@ function renderResultStep(
     onDeleteLine,
     onLogisticsCostSubmit,
     onPileDeliverySubmit,
+    onTripCountSubmit,
   };
 }
 
@@ -1203,5 +1212,104 @@ describe("CalculationResultStep long pile delivery", () => {
     const payload = onPileDeliverySubmit.mock.calls[0][0].longPileDelivery ?? {};
     expect(payload["160"]).toBeUndefined();
     expect(JSON.stringify(payload)).not.toContain('"trip_cost":0');
+  });
+});
+
+describe("CalculationResultStep manual trip count", () => {
+  it("shows the plate trip count under the tariff and submits an integer", () => {
+    const onTripCountSubmit = vi.fn(async () => undefined);
+    renderResultStep(
+      makeDraft({
+        totals: {
+          total_with_vat: 24000,
+          plate_trips: 12,
+          plate_trips_formula: 12,
+          plate_trips_notice: null,
+        },
+      }),
+      { onTripCountSubmit },
+    );
+
+    const input = screen.getByRole("textbox", { name: "Кол. рейсов плит" });
+    expect(input).toHaveValue("12");
+    expect(screen.queryByText(/по весу:/)).not.toBeInTheDocument();
+
+    fireEvent.change(input, { target: { value: "10" } });
+    expect(screen.getByText("по весу: 12")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "OK Кол. рейсов плит" }));
+    expect(onTripCountSubmit).toHaveBeenCalledWith({ plateTrips: 10 });
+  });
+
+  it("rejects an empty, fractional, or negative trip count without submitting", () => {
+    const onTripCountSubmit = vi.fn(async () => undefined);
+    renderResultStep(
+      makeDraft({
+        totals: { plate_trips: 12, plate_trips_formula: 12 },
+      }),
+      { onTripCountSubmit },
+    );
+    const input = screen.getByRole("textbox", { name: "Кол. рейсов плит" });
+    for (const value of ["", "10,5", "-1"]) {
+      fireEvent.change(input, { target: { value } });
+      fireEvent.click(screen.getByRole("button", { name: "OK Кол. рейсов плит" }));
+    }
+    expect(onTripCountSubmit).not.toHaveBeenCalled();
+    expect(screen.getByText("Число рейсов должно быть целым числом не меньше 0.")).toBeInTheDocument();
+  });
+
+  it("shows two notices and dismisses only the clicked boiler", () => {
+    const onTripCountSubmit = vi.fn(async () => undefined);
+    renderResultStep(
+      makeDraft({
+        order_data: [
+          { line_id: "p", product_type: "plates", name: "ПБ", qty: 1, unit_price: 10 },
+          { line_id: "f", product_type: "fbs", name: "ФБС", qty: 1, unit_price: 10 },
+        ],
+        totals: {
+          plate_trips: 12,
+          plate_trips_formula: 12,
+          plate_trips_notice: { previous: 10, next: 12 },
+          fbs_lm_delivery_ready: true,
+          fbs_lm_trips: 1,
+          fbs_lm_trips_formula: 1,
+          fbs_lm_trips_notice: { previous: 2, next: 1 },
+        },
+      }),
+      { onTripCountSubmit },
+    );
+
+    expect(screen.getByText("Рейсы плит пересчитаны: было 10, стало 12")).toBeInTheDocument();
+    expect(screen.getByText("Рейсы ФБС/ЛС/ЛМ пересчитаны: было 2, стало 1")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Закрыть напоминание о рейсах плит" }));
+    expect(onTripCountSubmit).toHaveBeenCalledWith({ dismissTripNotices: ["plate"] });
+    expect(screen.getByText("Рейсы ФБС/ЛС/ЛМ пересчитаны: было 2, стало 1")).toBeInTheDocument();
+  });
+
+  it("keeps the machines question and hides the trip field while piles are pending", () => {
+    renderResultStep(
+      makeDraft({
+        order_data: [
+          {
+            line_id: "pile",
+            product_type: "bridge_piles",
+            name: "C18-40T8",
+            mark: "C18-40T8",
+            qty: 49,
+            unit_price: 10,
+          },
+        ],
+        metadata: { ...baseMetadata(), product_type: "bridge_piles" },
+        totals: {
+          pile_delivery_ready: false,
+          pile_trips: 0,
+          pile_trip_pending_marks: ["C18-40T8"],
+        },
+      }),
+      {},
+      { draftProductType: "bridge_piles", isSimpleKpDraft: true },
+    );
+
+    expect(screen.getByPlaceholderText("Машин, шт.")).toBeInTheDocument();
+    expect(screen.queryByRole("textbox", { name: "Кол. рейсов свай" })).not.toBeInTheDocument();
   });
 });

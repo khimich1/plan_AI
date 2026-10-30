@@ -251,6 +251,8 @@ class CommercialCalculationService:
         long_pile_delivery_enabled: bool = False,
         long_pile_delivery: dict | None = None,
         kp_id: int | None = None,
+        trip_counts: Any = None,
+        accepted_trip_overrides: dict[str, int] | None = None,
     ) -> dict[str, Any]:
         from core.pile_trip_pricing import coerce_pile_trip_overrides
 
@@ -266,6 +268,8 @@ class CommercialCalculationService:
             long_pile_delivery_enabled=long_pile_delivery_enabled,
             long_pile_delivery=long_pile_delivery,
             kp_id=kp_id,
+            trip_counts=trip_counts,
+            accepted_trip_overrides=accepted_trip_overrides,
         )
 
     def compute_totals_from_metadata(
@@ -298,4 +302,6 @@ class CommercialCalculationService:
             ),
             long_pile_delivery=metadata.get("long_pile_delivery"),
             kp_id=_kp_id_from_offer_metadata(metadata),
+            trip_counts=metadata.get("trip_counts"),
+            accepted_trip_overrides=metadata.get("accepted_trip_overrides"),
         )

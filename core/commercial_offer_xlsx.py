@@ -128,6 +128,7 @@ def calculate_total_cost(
     long_pile_delivery_enabled: bool = False,
     long_pile_delivery: dict | None = None,
     kp_id: int | None = None,
+    trip_counts: dict | None = None,
 ) -> Dict:
     return _calculate_total_cost(
         order_data,
@@ -141,6 +142,7 @@ def calculate_total_cost(
         weight_catalog_db_path=weight_catalog_db_path,
         long_pile_delivery_enabled=long_pile_delivery_enabled,
         long_pile_delivery=long_pile_delivery,
+        trip_counts=trip_counts,
         kp_id=kp_id,
     )
 
@@ -202,6 +204,7 @@ def generate_commercial_offer_xlsx(
     weight_catalog_db_path: Optional[str] = None,
     long_pile_delivery_enabled: bool = False,
     long_pile_delivery: Optional[Dict] = None,
+    trip_counts: Optional[Dict] = None,
     suppress_company_contacts: bool = False,
 ) -> io.BytesIO:
     """
@@ -373,6 +376,7 @@ def generate_commercial_offer_xlsx(
         weight_catalog_db_path=weight_catalog_db_path,
         long_pile_delivery_enabled=long_pile_delivery_enabled,
         long_pile_delivery=long_pile_delivery,
+        trip_counts=trip_counts,
         kp_id=kp_db_id,
     )
     total_weight = document_cargo_weight_kg(
