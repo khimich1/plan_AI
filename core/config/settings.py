@@ -195,6 +195,8 @@ class Settings(BaseSettings):
         default=PROJECT_ROOT / "data" / "exchange_export",
         alias="EXCHANGE_EXPORT_DIR",
     )
+    # Ответы 1С. Пусто в development: каталог не создаётся и цикл чтения не стартует.
+    exchange_import_dir: Path | None = Field(default=None, alias="EXCHANGE_IMPORT_DIR")
 
     # Раскладка: жадное чередование целых и групп с резом по мин. армированию; сплиттер — согласованный выбор целых.
     layout_greedy_reinf_merge: bool = Field(default=True, alias="LAYOUT_GREEDY_REINF_MERGE")

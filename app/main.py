@@ -1,8 +1,12 @@
 from __future__ import annotations
 
+import asyncio
+import contextlib
 import logging
+import os
 import sys
 from contextlib import asynccontextmanager
+from pathlib import Path
 
 from fastapi import FastAPI, Request
 from fastapi.exceptions import RequestValidationError
@@ -23,7 +27,30 @@ from app.security.login_rate_limit import (
 from app.services.draft_store import DraftStoreLockTimeout
 from app.web.router import router as web_router
 from core.destructive_db_guard import fail_fast_if_destructive_flags_in_production
+from core.exchange_export_guard import (
+    fail_fast_if_exchange_dir_not_mounted,
+    read_mount_points,
+)
+from core.exchange_import_guard import fail_fast_if_exchange_import_not_mounted
 from core.logging_config import setup_logging
+
+_INVOICE_REPLY_INTERVAL_SECONDS = 60
+_logger = logging.getLogger(__name__)
+
+
+async def _import_invoice_replies(stop: asyncio.Event, directory: Path, db_path: str) -> None:
+    from app.services.invoice_reply_import import import_otvet_dir
+
+    while True:
+        try:
+            await asyncio.to_thread(import_otvet_dir, directory, db_path)
+        except Exception:
+            _logger.exception("invoice reply import failed")
+        try:
+            await asyncio.wait_for(stop.wait(), _INVOICE_REPLY_INTERVAL_SECONDS)
+            return
+        except TimeoutError:
+            continue
 
 
 @asynccontextmanager
@@ -37,6 +64,19 @@ async def lifespan(app: FastAPI):
     settings = get_settings()
     setup_logging(level=logging.INFO, log_dir=settings.logs_dir, log_filename="backend.log")
     fail_fast_if_destructive_flags_in_production(settings.app_env)
+    mounts = read_mount_points()
+    fail_fast_if_exchange_dir_not_mounted(
+        settings.app_env,
+        settings.exchange_export_dir,
+        environ=os.environ,
+        mount_points=mounts,
+    )
+    fail_fast_if_exchange_import_not_mounted(
+        settings.app_env,
+        settings.exchange_import_dir or Path("/exchange/from_1c"),
+        environ=os.environ,
+        mount_points=mounts,
+    )
     from app.adapters.visualization import wire_visualization_ports
 
     wire_visualization_ports()
@@ -51,7 +91,24 @@ async def lifespan(app: FastAPI):
     )
     warn_if_multi_worker_without_shared_store()
     app.state.settings = settings
-    yield
+    reply_stop = asyncio.Event()
+    reply_task = None
+    if "EXCHANGE_IMPORT_DIR" in os.environ and settings.exchange_import_dir is not None:
+        reply_task = asyncio.create_task(
+            _import_invoice_replies(
+                reply_stop,
+                settings.exchange_import_dir,
+                str(settings.plita_db_path),
+            )
+        )
+    try:
+        yield
+    finally:
+        reply_stop.set()
+        if reply_task is not None:
+            reply_task.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await reply_task
 
 
 def create_app() -> FastAPI:

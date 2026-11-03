@@ -37,6 +37,8 @@ services:
       PLANS_METADATA_PATH: /data/plans_metadata.json
       CURRENT_PLAN_PATH: /data/current_plan.json
       WORK_CALENDAR_PATH: /data/work_calendar.json
+      EXCHANGE_EXPORT_DIR: /data/exchange/to_1c
+      EXCHANGE_IMPORT_DIR: /exchange/from_1c
       BACKEND_CORS_ALLOWED_ORIGINS: "https://zavodstart.ru,https://www.zavodstart.ru,http://localhost,http://127.0.0.1,http://localhost:5173,http://127.0.0.1:5173"
       # GPT-4o Vision: на VPS создайте .env рядом с compose (см. .gitignore) или export OPENAI_API_KEY
       OCR_EXTERNAL_ENABLED: ${OCR_EXTERNAL_ENABLED:-true}
@@ -53,6 +55,8 @@ services:
       #    и скопируйте туда pb.db при необходимости; plita.db создастся при старте backend.
       # Если том уже создал пустые БД — для повторной заливки сидов: docker compose … down -v (сотрёт /data!)
       - web_split_data:/data
+      - ./data/exchange/to_1c:/data/exchange/to_1c
+      - /srv/exchange-1c/from_1c:/exchange/from_1c
 
   frontend:
     build:
