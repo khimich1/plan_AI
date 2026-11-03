@@ -141,8 +141,9 @@ def parse_card_text(text: str) -> CardParseResult:
     position, signatory = _signatory(source)
     fields["signatory_position"] = position
     fields["signatory_name"] = signatory
+    _apply_wrapped_names(fields, doubtful, source)
     fields["signatory_verb"] = _verb(lowered)
-    basis, poa_number, poa_date = _authority(source, signatory)
+    basis, poa_number, poa_date = _authority(source, fields.get("signatory_name"))
     fields["authority_basis"] = basis
     fields["poa_number"] = poa_number
     fields["poa_date"] = poa_date
@@ -151,6 +152,8 @@ def parse_card_text(text: str) -> CardParseResult:
     inn_disputed = _store_digit(fields, doubtful, "inn", inn_values, accept_inn)
     _store_digit(fields, doubtful, "kpp", kpp_values, accept_kpp)
     _store_digit(fields, doubtful, "ogrn", _labeled_digits(source, r"огрн(?:ип)?"), accept_ogrn)
+    if _apply_label_stack(fields, doubtful, source):
+        inn_disputed = True
     _store_digit(fields, doubtful, "bik", _labeled_digits(source, r"бик"), accept_bik)
     accounts = _store_account(fields, doubtful, _account_numbers(source, corr=False))
     _store_digit(
@@ -297,6 +300,79 @@ def _names(text: str, legal_form: str | None) -> tuple[str | None, str | None]:
     if full is None:
         full = short
     return short, full
+
+
+_NAME_LABELS = {
+    "полное наименование": "full_name",
+    "краткое наименование": "short_name",
+}
+_DIRECTOR_LINES = frozenset({"генеральный директор", "директор"})
+_KNOWN_LABEL_LINE = re.compile(
+    r"^(?:"
+    r"полн\w*\s+наименован\w*|"
+    r"кратк\w*\s+наименован\w*|"
+    r"генеральн\w*\s+директор\w*|"
+    r"директор\w*|"
+    r"инн|кпп|огрн(?:ип)?|"
+    r"бик(?:\s+банка)?|"
+    r"банк|"
+    r"юридическ\w*\s+адрес|"
+    r"почтов\w*\s+адрес|"
+    r"р\s*/\s*с|расч[её]тн\w*|"
+    r"к\s*/\s*с|корр\w*|"
+    r"e-?mail|электронн\w*\s+почт|"
+    r"тел(?:ефон)?|"
+    r"оквэд|окпо"
+    r")(?![а-яёa-z])",
+    re.I,
+)
+
+
+def _label_core(line: str) -> str:
+    return line.strip().lower().replace("ё", "е").strip(" \t:.;")
+
+
+def _is_known_label(line: str) -> bool:
+    return bool(_KNOWN_LABEL_LINE.match(line.strip().lower().replace("ё", "е")))
+
+
+def _following_value_lines(lines: list[str], start: int, limit: int) -> tuple[list[str], int]:
+    taken: list[str] = []
+    index = start
+    while index < len(lines) and len(taken) < limit:
+        if _is_known_label(lines[index]):
+            break
+        taken.append(re.sub(r"\s+", " ", lines[index]).strip())
+        index += 1
+    return taken, index
+
+
+def _apply_wrapped_names(fields: dict[str, Any], doubtful: list[str], text: str) -> None:
+    """До двух строк названия и одна строка директора. В doubtful только они."""
+    lines = _nonempty_lines(text)
+    index = 0
+    while index < len(lines):
+        field = _NAME_LABELS.get(_label_core(lines[index]))
+        if field and not fields.get(field):
+            taken, index = _following_value_lines(lines, index + 1, 2)
+            if taken:
+                fields[field] = " ".join(taken)
+                _mark_doubtful(doubtful, field)
+            continue
+        if _label_core(lines[index]) in _DIRECTOR_LINES:
+            taken, index = _following_value_lines(lines, index + 1, 1)
+            _keep_director_line(fields, doubtful, taken)
+            continue
+        index += 1
+
+
+def _keep_director_line(fields: dict[str, Any], doubtful: list[str], taken: list[str]) -> None:
+    if not taken:
+        return
+    if not fields.get("signatory_name"):
+        fields["signatory_name"] = taken[0]
+    if fields.get("signatory_name") == taken[0]:
+        _mark_doubtful(doubtful, "signatory_name")
 
 
 def _signatory(text: str) -> tuple[str | None, str | None]:
@@ -512,6 +588,128 @@ def accept_ogrn(raw: str | None) -> str | None:
     if len(digits) == 15 and int(digits[:14]) % 13 % 10 == int(digits[14]):
         return digits
     return None
+
+
+def accept_for_label(label: str, raw: str | None) -> str | None:
+    """Длина подписи, затем прежний контроль. Чужая длина — пусто."""
+    digits = normalize_digits(raw)
+    if label == "inn" and len(digits) in (10, 12):
+        return accept_inn(digits)
+    if label == "kpp" and len(digits) == 9:
+        return accept_kpp(digits)
+    if label == "ogrn" and len(digits) == 13:
+        return accept_ogrn(digits)
+    if label == "ogrnip" and len(digits) == 15:
+        return accept_ogrn(digits)
+    if label == "ogrn_or_ogrnip" and len(digits) in (13, 15):
+        return accept_ogrn(digits)
+    return None
+
+
+def zip_label_stack(labels: list[str], numbers: list[str]) -> dict[str, str]:
+    """Пара подпись–число, пока длина совпадает. Первое несовпадение обрывает стопку."""
+    paired: dict[str, str] = {}
+    for label, raw in zip(labels, numbers, strict=False):
+        accepted = accept_for_label(label, raw)
+        if accepted is None:
+            break
+        paired[label] = accepted
+    return paired
+
+
+def _stack_kind(line: str) -> str | None:
+    """Подпись без своего числа: инн, кпп или огрн в начале строки."""
+    normalized = line.strip().lower().replace("ё", "е")
+    if normalized.startswith("инн"):
+        kind = "inn"
+    elif normalized.startswith("кпп"):
+        kind = "kpp"
+    elif normalized.startswith("огрн"):
+        kind = _ogrn_kind(normalized)
+    else:
+        return None
+    if _line_has_suitable_number(line, kind):
+        return None
+    return kind
+
+
+def _ogrn_kind(normalized: str) -> str:
+    head = re.split(r"\d", normalized, maxsplit=1)[0]
+    if head.startswith("огрнип"):
+        return "ogrnip"
+    if "огрнип" in head:
+        return "ogrn_or_ogrnip"
+    return "ogrn"
+
+
+def _line_has_suitable_number(line: str, kind: str) -> bool:
+    chunks = re.findall(r"\d+", line)
+    if not chunks:
+        return False
+    candidates = list(chunks)
+    joined = "".join(chunks)
+    if joined not in candidates:
+        candidates.append(joined)
+    return any(accept_for_label(kind, item) for item in candidates)
+
+
+def _apply_label_stack(fields: dict[str, Any], doubtful: list[str], text: str) -> bool:
+    """Пишет только в пустые поля. True — в столбике нашёлся второй ИНН."""
+    lines = _nonempty_lines(text)
+    index = 0
+    disputed = False
+    while index < len(lines):
+        kinds: list[str] = []
+        while index < len(lines):
+            kind = _stack_kind(lines[index])
+            if kind is None:
+                break
+            kinds.append(kind)
+            index += 1
+        if not kinds:
+            index += 1
+            continue
+        numbers = lines[index:]
+        paired = zip_label_stack(kinds, numbers)
+        disputed = _write_stack(fields, doubtful, kinds, numbers, paired) or disputed
+        index += _matched_stack_length(kinds, numbers)
+    return disputed
+
+
+def _matched_stack_length(kinds: list[str], numbers: list[str]) -> int:
+    matched = 0
+    for kind, raw in zip(kinds, numbers, strict=False):
+        if accept_for_label(kind, raw) is None:
+            break
+        matched += 1
+    return matched
+
+
+def _write_stack(
+    fields: dict[str, Any],
+    doubtful: list[str],
+    kinds: list[str],
+    numbers: list[str],
+    paired: dict[str, str],
+) -> bool:
+    disputed = False
+    for kind, raw in zip(kinds, numbers, strict=False):
+        if kind not in paired or paired[kind] != accept_for_label(kind, raw):
+            break
+        field = "ogrn" if kind.startswith("ogrn") else kind
+        if fields.get(field):
+            if field == "inn" and str(fields[field]) != paired[kind]:
+                disputed = True
+                _mark_doubtful(doubtful, "inn")
+            continue
+        fields[field] = paired[kind]
+        _clear_doubtful(doubtful, field)
+    return disputed
+
+
+def _clear_doubtful(doubtful: list[str], key: str) -> None:
+    if key in doubtful:
+        doubtful.remove(key)
 
 
 def accept_bik(raw: str | None) -> str | None:

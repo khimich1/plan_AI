@@ -449,6 +449,40 @@ class PromiseTracksPerDayRequest(BaseModel):
     tracks_per_day: int = Field(ge=1, le=TRACKS_PER_DAY_HARD_CAP)
 
 
+class DirectoryContractRef(BaseModel):
+    """Действующий или привязываемый договор в строке справочника."""
+
+    id: int
+    number: str
+
+
+class DirectoryContractLink(BaseModel):
+    """Старый номер текстом или id свободной карточки. Пустое тело номер не выдаёт."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    number: str | None = None
+    contract_id: int | None = Field(default=None, ge=1)
+
+
+class DirectoryClientOut(BaseModel):
+    """Клиент 1С и пометка договора. Код в поиск не входит, только в ответ."""
+
+    id: int
+    name: str
+    inn: str | None = None
+    kpp: str | None = None
+    code: str
+    contract: DirectoryContractRef | None = None
+    linkable: DirectoryContractRef | None = None
+    candidates: list[DirectoryContractRef] = Field(default_factory=list)
+
+
+class DirectoryListOut(BaseModel):
+    items: list[DirectoryClientOut]
+    count: int
+
+
 class PromiseTracksPerDayResponse(BaseModel):
     """Current promise_tracks_per_day with audit (who/when)."""
 

@@ -19,6 +19,7 @@ import type {
   ContractCardCreatePayload,
   ContractCardList,
   ContractCardPatchPayload,
+  DirectoryList,
   SupplyContract,
   SupplyContractCreatePayload,
   SupplyContractPatchPayload,
@@ -43,6 +44,7 @@ export const archiveKeys = {
   supplyContract: (kpId: number) => ["archive", "supply-contract", kpId] as const,
   supplyRegistry: () => ["archive", "supply-contracts"] as const,
   contractCards: (q: string) => ["archive", "contract-cards", q] as const,
+  directory: (q: string) => ["archive", "directory", q] as const,
   contractCard: (cardId: number) => ["archive", "contract-card", cardId] as const,
 };
 
@@ -299,6 +301,59 @@ export const useDownloadEdoAgreementMutation = () =>
       return result;
     },
   });
+
+export const useDirectoryQuery = (q: string) =>
+  useQuery<DirectoryList>({
+    queryKey: archiveKeys.directory(q),
+    queryFn: () => archiveApi.searchDirectory(q),
+    enabled: q.trim().length >= 2,
+  });
+
+export const useSaveDirectoryBlankMutation = () => {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: ({
+      counterpartyId,
+      payload,
+    }: {
+      counterpartyId: number;
+      payload: SupplyContractCreatePayload;
+    }) => archiveApi.saveDirectoryBlank(counterpartyId, payload),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["archive", "directory"] });
+      queryClient.invalidateQueries({ queryKey: ["archive", "offer"] });
+      queryClient.invalidateQueries({ queryKey: archiveKeys.supplyRegistry() });
+    },
+  });
+};
+
+export const useEnsureDirectoryContractMutation = () => {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: ({
+      counterpartyId,
+      number,
+      contractId,
+    }: {
+      counterpartyId: number;
+      number?: string;
+      contractId?: number;
+    }) => {
+      const body: { number?: string; contract_id?: number } = {};
+      if (number) {
+        body.number = number;
+      }
+      if (contractId != null) {
+        body.contract_id = contractId;
+      }
+      return archiveApi.ensureDirectoryContract(counterpartyId, body);
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["archive", "directory"] });
+      queryClient.invalidateQueries({ queryKey: ["archive", "offer"] });
+    },
+  });
+};
 
 export const useContractCardsQuery = (q: string, options?: { enabled?: boolean }) =>
   useQuery<ContractCardList>({

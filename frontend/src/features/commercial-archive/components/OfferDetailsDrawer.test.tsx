@@ -23,6 +23,19 @@ const mockUsePromiseHoldQuery = vi.fn(() => ({ data: null, isPending: false, isE
 const mockResume = vi.fn();
 const mockNavigate = vi.fn();
 const mockDispatch = vi.fn();
+const { mockEnsureDirectoryContract, mockUseDirectoryQuery, mockSaveDirectoryBlank, mockParseContractCardFile } =
+  vi.hoisted(() => ({
+    mockEnsureDirectoryContract: vi.fn().mockResolvedValue({ id: 1, number: "0001/11/26" }),
+    mockUseDirectoryQuery: vi.fn(() => ({
+      data: { items: [], count: 0 },
+      isPending: false,
+      isError: false,
+      error: null,
+    })),
+    mockSaveDirectoryBlank: vi.fn(),
+    mockParseContractCardFile: vi.fn(),
+  }));
+
 const { mockBindMutateAsync, mockBindMutation, mockCreateMutateAsync, mockCreateMutation } = vi.hoisted(() => {
   const mockBindMutateAsync = vi.fn();
   const mockBindMutation = vi.fn(() => ({
@@ -68,6 +81,22 @@ vi.mock("@/features/commercial-archive/hooks/useArchiveQueries", () => ({
   }),
   useBindCounterpartyMutation: () => mockBindMutation(),
   useCreateAndBindCounterpartyMutation: () => mockCreateMutation(),
+  useEnsureDirectoryContractMutation: () => ({
+    mutateAsync: mockEnsureDirectoryContract,
+    isPending: false,
+    isError: false,
+    error: null,
+  }),
+  useDirectoryQuery: (...args: unknown[]) => mockUseDirectoryQuery(...args),
+  usePatchContractCardMutation: () => ({ mutateAsync: vi.fn(), isPending: false }),
+  usePatchSupplyContractMutation: () => ({ mutateAsync: vi.fn(), isPending: false }),
+  useSaveContractRequisitesMutation: () => ({ mutateAsync: vi.fn(), isPending: false }),
+  useSaveDirectoryBlankMutation: () => ({ mutateAsync: mockSaveDirectoryBlank, isPending: false }),
+  useDeleteContractCardMutation: () => ({ mutateAsync: vi.fn(), isPending: false }),
+  useParseContractCardMutation: () => ({ mutateAsync: vi.fn(), isPending: false }),
+  useParseContractCardFileMutation: () => ({ mutateAsync: mockParseContractCardFile, isPending: false }),
+  useDownloadContractDocumentMutation: () => ({ mutateAsync: vi.fn(), isPending: false }),
+  useDownloadContractEdoAgreementMutation: () => ({ mutateAsync: vi.fn(), isPending: false }),
   useExportInvoiceMutation: () => ({
     mutateAsync: mockExportInvoice,
     isPending: false,
@@ -903,6 +932,137 @@ describe("OfferDetailsDrawer counterparty requisites", () => {
     const sendButton = screen.getByRole("button", { name: "Отправить в 1С" });
     expect(sendButton).toBeDisabled();
     expect(sendButton).toHaveAttribute("title", "Сначала занесите контрагента");
+  });
+
+  it("links a typed number from в реестре договора нет without closing the offer", async () => {
+    const onClose = vi.fn();
+    mockEnsureDirectoryContract.mockResolvedValue({ id: 4, number: "0882/09/25" });
+    mockUseDirectoryQuery.mockReturnValue({
+      data: {
+        items: [
+          {
+            id: 15,
+            name: "ООО Тест",
+            inn: "7701000001",
+            kpp: null,
+            code: "00-1",
+            contract: null,
+            linkable: null,
+            candidates: [
+              { id: 4, number: "0100/01/24" },
+              { id: 5, number: "0882/09/25" },
+            ],
+          },
+        ],
+        count: 1,
+      },
+      isPending: false,
+      isError: false,
+      error: null,
+    });
+    mockUseArchiveOfferQuery.mockReturnValue({
+      data: makeOffer("в архиве", null, {
+        counterparty_id: 15,
+        customer_inn: "7701000001",
+        invoice_export_block: "Нет действующего договора поставки",
+      }),
+      isPending: false,
+      isError: false,
+      error: null,
+    });
+
+    render(<OfferDetailsDrawer open kpId={42} onClose={onClose} />);
+    fireEvent.click(screen.getByRole("button", { name: "в реестре договора нет" }));
+
+    expect(mockEnsureDirectoryContract).not.toHaveBeenCalled();
+    expect(onClose).not.toHaveBeenCalled();
+    const sendBefore = screen.getByRole("button", { name: "Отправить в 1С" });
+    expect(sendBefore).toBeDisabled();
+    expect(sendBefore).toHaveAttribute("title", "Нет действующего договора поставки");
+
+    fireEvent.submit(screen.getByRole("form", { name: "Старый номер" }));
+    expect(mockEnsureDirectoryContract).not.toHaveBeenCalled();
+
+    fireEvent.click(screen.getByRole("button", { name: "Привязать № 0882/09/25" }));
+
+    await waitFor(() => {
+      expect(mockEnsureDirectoryContract).toHaveBeenCalledWith({
+        counterpartyId: 15,
+        contractId: 5,
+      });
+    });
+    expect(onClose).not.toHaveBeenCalled();
+    expect(mockNavigate).not.toHaveBeenCalled();
+    expect(screen.queryByTestId("no-1c-badge")).not.toBeInTheDocument();
+    expect(screen.queryByText("Занести контрагента")).not.toBeInTheDocument();
+    const sendButton = screen.getByRole("button", { name: "Отправить в 1С" });
+    expect(sendButton).toBeEnabled();
+    expect(sendButton).not.toHaveAttribute("title", "Нет действующего договора поставки");
+    mockUseDirectoryQuery.mockReturnValue({
+      data: { items: [], count: 0 },
+      isPending: false,
+      isError: false,
+      error: null,
+    });
+  });
+
+  it("sends a typed number without closing the offer or clearing the block first", async () => {
+    const onClose = vi.fn();
+    mockEnsureDirectoryContract.mockResolvedValue({ id: 8, number: "0882/09/25" });
+    mockUseArchiveOfferQuery.mockReturnValue({
+      data: makeOffer("в архиве", null, {
+        counterparty_id: 15,
+        invoice_export_block: "Нет действующего договора поставки",
+      }),
+      isPending: false,
+      isError: false,
+      error: null,
+    });
+
+    render(<OfferDetailsDrawer open kpId={42} onClose={onClose} />);
+    fireEvent.click(screen.getByRole("button", { name: "в реестре договора нет" }));
+    fireEvent.change(screen.getByLabelText("Номер договора"), { target: { value: "0882/09/25" } });
+    fireEvent.click(screen.getByRole("button", { name: "Привязать" }));
+
+    await waitFor(() => {
+      expect(mockEnsureDirectoryContract).toHaveBeenCalledWith({
+        counterpartyId: 15,
+        number: "0882/09/25",
+      });
+    });
+    expect(onClose).not.toHaveBeenCalled();
+    expect(screen.getByRole("button", { name: "Отправить в 1С" })).toBeEnabled();
+  });
+
+  it("opens Собрать договор without closing the offer or clearing the contract block", () => {
+    const onClose = vi.fn();
+    mockUseArchiveOfferQuery.mockReturnValue({
+      data: makeOffer("в архиве", null, {
+        counterparty_id: 15,
+        customer_name: "ООО Тест",
+        customer_inn: "7701000001",
+        invoice_export_block: "Нет действующего договора поставки",
+      }),
+      isPending: false,
+      isError: false,
+      error: null,
+    });
+
+    render(<OfferDetailsDrawer open kpId={42} onClose={onClose} />);
+    fireEvent.click(screen.getByRole("button", { name: "в реестре договора нет" }));
+    fireEvent.click(screen.getByRole("button", { name: "Собрать договор" }));
+
+    expect(screen.getByRole("form", { name: "Реквизиты договора" })).toBeInTheDocument();
+    expect(screen.getByText("ООО Тест")).toBeInTheDocument();
+    expect(onClose).not.toHaveBeenCalled();
+    expect(mockEnsureDirectoryContract).not.toHaveBeenCalled();
+    expect(mockSaveDirectoryBlank).not.toHaveBeenCalled();
+    expect(mockParseContractCardFile).not.toHaveBeenCalled();
+    const sendButton = screen.getByRole("button", { name: "Отправить в 1С" });
+    expect(sendButton).toBeDisabled();
+    expect(sendButton).toHaveAttribute("title", "Нет действующего договора поставки");
+    expect(screen.queryByTestId("no-1c-badge")).not.toBeInTheDocument();
+    expect(screen.queryByText("Занести контрагента")).not.toBeInTheDocument();
   });
 
   it("shows в реестре договора нет beside a 1C client without an active contract", () => {

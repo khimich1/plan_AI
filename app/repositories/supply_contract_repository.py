@@ -8,6 +8,7 @@ from datetime import date, datetime
 from typing import Any
 
 from app.repositories.contract_client_link import (
+    normalize_inn,
     select_contract_client_links,
     unique_client_id_for_inn,
 )
@@ -19,6 +20,7 @@ from core.supply_contract import (
     CONTRACT_STATUSES,
     DEFAULT_STATUS,
     SCAN_NOTES,
+    contract_date_from_number,
     format_contract_number,
     next_contract_seq,
     normalize_contract_number,
@@ -164,6 +166,33 @@ class ContractLinkStats:
 
     created: int
     skipped: int
+
+
+@dataclass(frozen=True)
+class DirectoryWrite:
+    """Договор клиента либо отказ. Строки справочника этот вызов не создаёт."""
+
+    row: dict[str, Any] | None = None
+    refusal: str | None = None
+    hint: str | None = None
+
+
+def _card_inn_matches(card: dict[str, Any], party: dict[str, Any]) -> bool:
+    """Пустой ИНН карточки не мешает выбору. Заполненный должен совпасть с клиентом."""
+    card_inn = normalize_inn(card.get("inn"))
+    if card_inn is None:
+        return True
+    return card_inn == normalize_inn(party.get("inn"))
+
+
+def _directory_refusal(party: dict[str, Any] | None, *, clients_only: bool) -> str | None:
+    if party is None:
+        return "missing"
+    if not int(party.get("is_active") or 0):
+        return "inactive"
+    if clients_only and not int(party.get("is_client") or 0):
+        return "missing"
+    return None
 
 
 _LINK_UPDATE = """
@@ -471,6 +500,194 @@ class SupplyContractRepository:
         with self._connect() as conn:
             contracts, clients = self._fetch_link_inputs(conn)
         return select_contract_client_links(contracts, clients)
+
+    def active_contract_refs(self, client_ids: list[int]) -> dict[int, dict[str, Any]]:
+        """Действующий договор каждого клиента: id и номер. Отменённый не входит."""
+        if not client_ids:
+            return {}
+        marks = ", ".join("?" for _ in client_ids)
+        with self._connect() as conn:
+            rows = conn.execute(
+                f"""
+                SELECT id, number, counterparty_id
+                FROM supply_contract
+                WHERE counterparty_id IN ({marks})
+                  AND status != ?
+                """,
+                (*[int(item) for item in client_ids], CANCELLED_STATUS),
+            ).fetchall()
+        return {
+            int(row["counterparty_id"]): {"id": int(row["id"]), "number": str(row["number"])}
+            for row in rows
+        }
+
+    def linkable_contract_refs(self) -> dict[int, dict[str, Any]]:
+        """Одна свободная карточка на клиента. Несколько карточек и два кода дают пусто."""
+        with self._connect() as conn:
+            contracts, clients = self._fetch_link_inputs(conn)
+        numbers = {
+            int(row["id"]): str(row["number"])
+            for row in contracts
+            if row.get("id") is not None and row.get("number")
+        }
+        return {
+            int(client_id): {"id": int(contract_id), "number": numbers[int(contract_id)]}
+            for contract_id, client_id in select_contract_client_links(contracts, clients)
+            if int(contract_id) in numbers
+        }
+
+    def free_contract_refs_by_inn(self) -> dict[str, list[dict[str, Any]]]:
+        """Свободные неотменённые карточки, сгруппированные по ИНН без пробелов."""
+        with self._connect() as conn:
+            rows = conn.execute(
+                """
+                SELECT id, number, inn
+                FROM supply_contract
+                WHERE counterparty_id IS NULL
+                  AND status != ?
+                ORDER BY id
+                """,
+                (CANCELLED_STATUS,),
+            ).fetchall()
+        grouped: dict[str, list[dict[str, Any]]] = {}
+        for row in rows:
+            inn = normalize_inn(row["inn"])
+            if inn is None:
+                continue
+            grouped.setdefault(inn, []).append(
+                {"id": int(row["id"]), "number": str(row["number"])}
+            )
+        return grouped
+
+    def ensure_directory_contract(
+        self,
+        counterparty_id: int,
+        *,
+        user_id: int,
+        clients_only: bool,
+        number: str | None = None,
+        contract_id: int | None = None,
+    ) -> DirectoryWrite:
+        """Привязать выбранный номер или карточку. Пустой вызов строку не создаёт.
+
+        Новый текст пишется отдельной вставкой, без ``_allocate_number``.
+        """
+        conn = self._connect()
+        try:
+            conn.execute("BEGIN IMMEDIATE")
+            party_count = self._count_clients(conn)
+            party = self._directory_party(conn, counterparty_id)
+            refusal = _directory_refusal(party, clients_only=clients_only)
+            if refusal is not None or party is None:
+                conn.execute("COMMIT")
+                return DirectoryWrite(refusal=refusal or "missing")
+            outcome = self._link_directory_choice(
+                conn,
+                party,
+                user_id=user_id,
+                number=number,
+                contract_id=contract_id,
+            )
+            if outcome.refusal is not None:
+                conn.execute("COMMIT")
+                return outcome
+            if self._count_clients(conn) != party_count:
+                raise sqlite3.OperationalError("справочник контрагентов изменился")
+            conn.execute("COMMIT")
+            return outcome
+        except sqlite3.IntegrityError:
+            self._rollback_quietly(conn)
+            return self._directory_conflict(counterparty_id, number=number, contract_id=contract_id)
+        except Exception:
+            self._rollback_quietly(conn)
+            raise
+        finally:
+            conn.close()
+
+    def _directory_conflict(
+        self,
+        counterparty_id: int,
+        *,
+        number: str | None,
+        contract_id: int | None,
+    ) -> DirectoryWrite:
+        winner = self.get_active_by_counterparty(int(counterparty_id))
+        if winner is not None and contract_id is not None and int(winner["id"]) == int(contract_id):
+            return DirectoryWrite(row=winner)
+        if winner is not None and number:
+            try:
+                if str(winner["number"]) == normalize_contract_number(number):
+                    return DirectoryWrite(row=winner)
+            except ValueError:
+                pass
+        if winner is not None:
+            return DirectoryWrite(refusal="busy", hint=str(winner["number"]))
+        raise sqlite3.IntegrityError("номер договора не записан")
+
+    def save_directory_blank(
+        self,
+        counterparty_id: int,
+        fields: dict[str, Any],
+        *,
+        user_id: int,
+        manager_name: str,
+        clients_only: bool,
+        number_date: date,
+        contract_date: date,
+        update_date: date | None,
+    ) -> DirectoryWrite:
+        """Первый готовый бланк берёт следующий seq. Повтор пишет реквизиты в ту же строку."""
+        conn = self._connect()
+        try:
+            conn.execute("BEGIN IMMEDIATE")
+            party_count = self._count_clients(conn)
+            party = self._directory_party(conn, counterparty_id)
+            refusal = _directory_refusal(party, clients_only=clients_only)
+            if refusal is not None or party is None:
+                conn.execute("COMMIT")
+                return DirectoryWrite(refusal=refusal or "missing")
+            active = self._active_row(conn, int(party["id"]))
+            if active is not None:
+                stored = self._write_blank_requisites(
+                    conn,
+                    active,
+                    fields,
+                    manager_name=manager_name,
+                    contract_date=update_date,
+                )
+            else:
+                stored = self._insert_directory_blank(
+                    conn,
+                    party,
+                    fields,
+                    user_id=user_id,
+                    manager_name=manager_name,
+                    number_date=number_date,
+                    contract_date=contract_date,
+                )
+            if self._count_clients(conn) != party_count:
+                raise sqlite3.OperationalError("справочник контрагентов изменился")
+            conn.execute("COMMIT")
+            return DirectoryWrite(row=stored)
+        except sqlite3.IntegrityError:
+            self._rollback_quietly(conn)
+            winner = self.get_active_by_counterparty(int(counterparty_id))
+            if winner is None:
+                raise
+            updated = self.save_requisites(
+                int(winner["id"]),
+                fields,
+                manager_name=manager_name,
+                contract_date=update_date,
+            )
+            if updated is None:
+                raise sqlite3.OperationalError("карточка не прочитана после записи реквизитов")
+            return DirectoryWrite(row=updated)
+        except Exception:
+            self._rollback_quietly(conn)
+            raise
+        finally:
+            conn.close()
 
     def unique_active_client_id(self, inn: object) -> int | None:
         with self._connect() as conn:
@@ -847,6 +1064,270 @@ class SupplyContractRepository:
             user_id=user_id,
             created_at=created_at,
         )
+
+    def _directory_party(
+        self,
+        conn: sqlite3.Connection,
+        counterparty_id: int,
+    ) -> dict[str, Any] | None:
+        row = conn.execute(
+            """
+            SELECT id, name, inn, is_active, is_client
+            FROM counterparties
+            WHERE id = ?
+            """,
+            (int(counterparty_id),),
+        ).fetchone()
+        return None if row is None else dict(row)
+
+    def _link_directory_choice(
+        self,
+        conn: sqlite3.Connection,
+        party: dict[str, Any],
+        *,
+        user_id: int,
+        number: str | None,
+        contract_id: int | None,
+    ) -> DirectoryWrite:
+        has_number = bool(number and str(number).strip())
+        has_id = contract_id is not None
+        if has_number and has_id:
+            return DirectoryWrite(refusal="both")
+        if not has_number and not has_id:
+            return DirectoryWrite(refusal="empty")
+        if has_id:
+            card = self._by_id(conn, int(contract_id))
+            if card is None:
+                return DirectoryWrite(refusal="missing_card")
+            return self._claim_directory_card(conn, party, card, user_id=user_id)
+        normalized = normalize_contract_number(str(number))
+        card = self._card_by_number(conn, normalized)
+        if card is None:
+            return self._insert_known_directory_number(
+                conn,
+                party,
+                number=normalized,
+                user_id=user_id,
+            )
+        return self._claim_directory_card(conn, party, card, user_id=user_id)
+
+    def _claim_directory_card(
+        self,
+        conn: sqlite3.Connection,
+        party: dict[str, Any],
+        card: dict[str, Any],
+        *,
+        user_id: int,
+    ) -> DirectoryWrite:
+        client_id = int(party["id"])
+        owner = card.get("counterparty_id")
+        shown = str(card["number"])
+        if owner is not None and int(owner) != client_id:
+            return DirectoryWrite(refusal="foreign", hint=shown)
+        if owner is not None:
+            return DirectoryWrite(row=card)
+        if str(card.get("status") or "") == CANCELLED_STATUS:
+            return DirectoryWrite(refusal="occupied", hint=shown)
+        active = self._active_row(conn, client_id)
+        if active is not None and int(active["id"]) != int(card["id"]):
+            return DirectoryWrite(refusal="busy", hint=str(active["number"]))
+        if not _card_inn_matches(card, party):
+            return DirectoryWrite(refusal="inn")
+        stored = self._assign_directory_owner(
+            conn,
+            card,
+            client_id,
+            user_id=user_id,
+        )
+        return DirectoryWrite(row=stored)
+
+    def _assign_directory_owner(
+        self,
+        conn: sqlite3.Connection,
+        card: dict[str, Any],
+        client_id: int,
+        *,
+        user_id: int,
+    ) -> dict[str, Any]:
+        contract_id = int(card["id"])
+        updated = conn.execute(
+            """
+            UPDATE supply_contract
+            SET counterparty_id = ?
+            WHERE id = ?
+              AND counterparty_id IS NULL
+              AND status != ?
+              AND NOT EXISTS (
+                  SELECT 1 FROM supply_contract AS other
+                  WHERE other.counterparty_id = ?
+                    AND other.status != ?
+                    AND other.id != ?
+              )
+            """,
+            (
+                client_id,
+                contract_id,
+                CANCELLED_STATUS,
+                client_id,
+                CANCELLED_STATUS,
+                contract_id,
+            ),
+        )
+        if updated.rowcount != 1:
+            raise sqlite3.IntegrityError("карточка не привязана")
+        created_at = datetime.now().isoformat(timespec="seconds")
+        self._insert_event(
+            conn,
+            contract_id=contract_id,
+            field="counterparty_id",
+            old_value=None,
+            new_value=str(client_id),
+            user_id=user_id,
+            created_at=created_at,
+        )
+        stored = self._by_id(conn, contract_id)
+        if stored is None:
+            raise sqlite3.OperationalError("карточка не прочитана после привязки")
+        return stored
+
+    def _insert_known_directory_number(
+        self,
+        conn: sqlite3.Connection,
+        party: dict[str, Any],
+        *,
+        number: str,
+        user_id: int,
+    ) -> DirectoryWrite:
+        """Вписанный номер сразу с id клиента. Seq не считает."""
+        client_id = int(party["id"])
+        active = self._active_row(conn, client_id)
+        if active is not None:
+            if str(active["number"]) == number:
+                return DirectoryWrite(row=active)
+            return DirectoryWrite(refusal="busy", hint=str(active["number"]))
+        contract_date = contract_date_from_number(number)
+        created_at = datetime.now().isoformat(timespec="seconds")
+        cur = conn.execute(
+            """
+            INSERT INTO supply_contract (
+                counterparty_id, imported_name, inn, number, contract_date,
+                status, manager_name, created_at, created_by_user_id
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                client_id,
+                str(party["name"]),
+                party.get("inn"),
+                number,
+                None if contract_date is None else contract_date.isoformat(),
+                DEFAULT_STATUS,
+                None,
+                created_at,
+                int(user_id),
+            ),
+        )
+        contract_id = int(cur.lastrowid)
+        self._insert_event(
+            conn,
+            contract_id=contract_id,
+            field="status",
+            old_value=None,
+            new_value=DEFAULT_STATUS,
+            user_id=user_id,
+            created_at=created_at,
+        )
+        stored = self._by_id(conn, contract_id)
+        if stored is None:
+            raise sqlite3.OperationalError("договор не прочитан после вставки")
+        return DirectoryWrite(row=stored)
+
+    def _write_blank_requisites(
+        self,
+        conn: sqlite3.Connection,
+        current: dict[str, Any],
+        fields: dict[str, Any],
+        *,
+        manager_name: str,
+        contract_date: date | None,
+    ) -> dict[str, Any]:
+        assignments, values = _requisite_assignments(
+            fields,
+            contract_date=contract_date,
+            current_manager=current.get("manager_name"),
+            manager_name=manager_name,
+        )
+        if assignments:
+            conn.execute(
+                f"UPDATE supply_contract SET {', '.join(assignments)} WHERE id = ?",
+                (*values, int(current["id"])),
+            )
+        stored = self._by_id(conn, int(current["id"]))
+        if stored is None:
+            raise sqlite3.OperationalError("карточка не прочитана после записи реквизитов")
+        return stored
+
+    def _insert_directory_blank(
+        self,
+        conn: sqlite3.Connection,
+        party: dict[str, Any],
+        fields: dict[str, Any],
+        *,
+        user_id: int,
+        manager_name: str,
+        number_date: date,
+        contract_date: date,
+    ) -> dict[str, Any]:
+        number = self._allocate_number(conn, number_date)
+        created_at = datetime.now().isoformat(timespec="seconds")
+        columns = (
+            "counterparty_id",
+            "imported_name",
+            "number",
+            "contract_date",
+            "manager_name",
+            "status",
+            *_REQUISITE_COLUMNS,
+            "created_at",
+            "created_by_user_id",
+        )
+        values = {
+            "counterparty_id": int(party["id"]),
+            "imported_name": str(party["name"]),
+            "number": number,
+            "contract_date": contract_date.isoformat(),
+            "manager_name": manager_name,
+            "status": DEFAULT_STATUS,
+            **fields,
+            "created_at": created_at,
+            "created_by_user_id": int(user_id),
+        }
+        placeholders = ", ".join("?" for _ in columns)
+        names = ", ".join(columns)
+        cur = conn.execute(
+            f"INSERT INTO supply_contract ({names}) VALUES ({placeholders})",
+            tuple(values.get(column) for column in columns),
+        )
+        contract_id = int(cur.lastrowid)
+        self._insert_event(
+            conn,
+            contract_id=contract_id,
+            field="status",
+            old_value=None,
+            new_value=DEFAULT_STATUS,
+            user_id=user_id,
+            created_at=created_at,
+        )
+        stored = self._by_id(conn, contract_id)
+        if stored is None:
+            raise sqlite3.OperationalError("договор не прочитан после вставки")
+        return stored
+
+    def _card_by_number(self, conn: sqlite3.Connection, number: str) -> dict[str, Any] | None:
+        row = conn.execute(
+            "SELECT * FROM supply_contract WHERE number = ?",
+            (number,),
+        ).fetchone()
+        return _row_to_dict(row)
 
     def _fetch_link_inputs(
         self, conn: sqlite3.Connection

@@ -73,6 +73,67 @@ export const blankFormFromCard = (source: ContractCard): SupplyContractFormValue
   okved: textOrEmpty(source.okved),
 });
 
+const REQUIRED_BLANK_KEYS = [
+  "full_name",
+  "short_name",
+  "signatory_name",
+  "inn",
+  "ogrn",
+  "legal_address",
+  "email",
+  "bank_name",
+  "account",
+  "corr_account",
+  "bik",
+] as const;
+
+const FORMS_NEEDING_KPP = new Set(["ooo", "ao"]);
+
+export const emptyBlankForm = (): SupplyContractFormValues =>
+  blankFormFromCard({
+    legal_form: null,
+    full_name: null,
+    short_name: null,
+    signatory_position: null,
+    signatory_name: null,
+    signatory_verb: null,
+    authority_basis: null,
+    poa_number: null,
+    poa_date: null,
+    inn: null,
+    kpp: null,
+    ogrn: null,
+    legal_address: null,
+    postal_address: null,
+    phone: null,
+    email: null,
+    bank_name: null,
+    account: null,
+    corr_account: null,
+    bik: null,
+    edo_operator: null,
+    edo_id: null,
+    okved: null,
+  } as ContractCard);
+
+export const blankIsReady = (form: SupplyContractFormValues): boolean => {
+  if (form.legal_form === "") {
+    return false;
+  }
+  if (form.authority_basis === "доверенность") {
+    if (!form.poa_number.trim() || !form.poa_date.trim()) {
+      return false;
+    }
+  }
+  if (REQUIRED_BLANK_KEYS.some((key) => !form[key].trim())) {
+    return false;
+  }
+  if (FORMS_NEEDING_KPP.has(form.legal_form)) {
+    return Boolean(form.kpp.trim() && form.signatory_position.trim());
+  }
+  return true;
+};
+
 export const requisitesPayload = (
   form: SupplyContractFormValues,
 ): SupplyContractCreatePayload | null => {

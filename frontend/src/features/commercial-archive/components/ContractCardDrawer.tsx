@@ -9,15 +9,19 @@ import {
   useDownloadContractDocumentMutation,
   useDownloadContractEdoAgreementMutation,
   useDeleteContractCardMutation,
+  useParseContractCardFileMutation,
   useParseContractCardMutation,
   usePatchContractCardMutation,
   usePatchSupplyContractMutation,
   useSaveContractRequisitesMutation,
+  useSaveDirectoryBlankMutation,
 } from "@/features/commercial-archive/hooks/useArchiveQueries";
 import { formatContractDate } from "@/features/commercial-archive/lib/formatContractDate";
 import {
   blankFormFromCard,
+  blankIsReady,
   digitWarningText,
+  emptyBlankForm,
   formWithBank,
   mergeParsedFields,
   requisitesPayload,
@@ -39,10 +43,18 @@ export type ContractCardIntake = {
   parsed: SupplyContractParseResult;
 };
 
+export type ContractDraft = {
+  counterpartyId: number;
+  name: string;
+  inn: string | null;
+};
+
 type Props = {
-  card: ContractCard;
+  card?: ContractCard;
+  draft?: ContractDraft;
   onUpdated?: (card: ContractCard) => void;
   onDeleted?: () => void;
+  onCloseDraft?: () => void;
   intake?: ContractCardIntake | null;
 };
 
@@ -89,7 +101,7 @@ const seededSource = (file: File, rawText: string | undefined): SeededSource => 
   if (isImageFile(file)) {
     return { name: file.name, text: null, visual: "image", url: URL.createObjectURL(file) };
   }
-  if (isPdfFile(file) && !text) {
+  if (isPdfFile(file)) {
     return { name: file.name, text: null, visual: "pdf", url: URL.createObjectURL(file) };
   }
   return { name: file.name, text, visual: null, url: null };
@@ -351,28 +363,42 @@ const DownloadRow = ({
   </div>
 );
 
-export const ContractCardDrawer = ({ card, onUpdated, onDeleted, intake = null }: Props) => {
+export const ContractCardDrawer = ({
+  card,
+  draft,
+  onUpdated,
+  onDeleted,
+  onCloseDraft,
+  intake = null,
+}: Props) => {
+  const isDraft = draft != null && card == null;
   const patchCard = usePatchContractCardMutation();
   const patchSupply = usePatchSupplyContractMutation();
   const saveBlank = useSaveContractRequisitesMutation();
+  const saveDirectoryBlank = useSaveDirectoryBlankMutation();
   const removeCard = useDeleteContractCardMutation();
   const parseCard = useParseContractCardMutation();
+  const parseFile = useParseContractCardFileMutation();
   const documentDownload = useDownloadContractDocumentMutation();
   const edoDownload = useDownloadContractEdoAgreementMutation();
   const [seed] = useState(() =>
     intake ? seededSource(intake.file, intake.parsed.source_text) : null,
   );
-  const [name, setName] = useState(card.name);
-  const [inn, setInn] = useState(card.inn ?? "");
-  const [number, setNumber] = useState(card.number);
-  const [contractDate, setContractDate] = useState(card.contract_date);
-  const [status, setStatus] = useState(card.status);
-  const [scanNote, setScanNote] = useState(card.scan_note ?? "");
-  const [hasScan, setHasScan] = useState(card.has_scan);
-  const [requisitesComplete, setRequisitesComplete] = useState(card.requisites_complete);
-  const [form, setForm] = useState<SupplyContractFormValues>(() =>
-    intake ? mergeParsedFields(blankFormFromCard(card), intake.parsed) : blankFormFromCard(card),
-  );
+  const [name, setName] = useState(card?.name ?? draft?.name ?? "");
+  const [inn, setInn] = useState(card?.inn ?? draft?.inn ?? "");
+  const [number, setNumber] = useState(card?.number ?? "");
+  const [contractDate, setContractDate] = useState(card?.contract_date ?? null);
+  const [status, setStatus] = useState(card?.status ?? "нет");
+  const [scanNote, setScanNote] = useState(card?.scan_note ?? "");
+  const [hasScan, setHasScan] = useState(card?.has_scan ?? false);
+  const [requisitesComplete, setRequisitesComplete] = useState(card?.requisites_complete ?? false);
+  const [issuedNumber, setIssuedNumber] = useState<string | null>(null);
+  const [form, setForm] = useState<SupplyContractFormValues>(() => {
+    if (!card) {
+      return emptyBlankForm();
+    }
+    return intake ? mergeParsedFields(blankFormFromCard(card), intake.parsed) : blankFormFromCard(card);
+  });
   const [doubtful, setDoubtful] = useState<Set<string>>(
     () => new Set(intake?.parsed.doubtful ?? []),
   );
@@ -390,8 +416,11 @@ export const ContractCardDrawer = ({ card, onUpdated, onDeleted, intake = null }
   const sourceUrlRef = useRef<string | null>(seed?.url ?? null);
 
   useEffect(() => {
+    if (!card) {
+      return;
+    }
     setRequisitesComplete(card.requisites_complete);
-  }, [card.requisites_complete]);
+  }, [card]);
 
   useEffect(() => {
     return () => {
@@ -404,12 +433,23 @@ export const ContractCardDrawer = ({ card, onUpdated, onDeleted, intake = null }
 
   const identity = identityPayload(name, inn, number);
   const blankReady = form.legal_form !== "" && poaFieldsReady(form);
+  const draftReady = blankIsReady(form);
   const blankTitle =
     form.legal_form === ""
       ? "Выберите вид"
       : poaFieldsReady(form)
         ? undefined
         : "Укажите номер и дату доверенности";
+  const savePending = isDraft ? saveDirectoryBlank.isPending : saveBlank.isPending;
+  const saveTitle = isDraft
+    ? draftReady
+      ? undefined
+      : form.legal_form === ""
+        ? "Выберите вид"
+        : poaFieldsReady(form)
+          ? "Заполните реквизиты"
+          : "Укажите номер и дату доверенности"
+    : blankTitle;
   const reviewWarning = digitWarningText(doubtful, accounts.length, banks.length);
 
   const setField = (key: keyof SupplyContractFormValues, value: string) => {
@@ -425,6 +465,9 @@ export const ContractCardDrawer = ({ card, onUpdated, onDeleted, intake = null }
     if (typeof updated.has_scan === "boolean") {
       setHasScan(updated.has_scan);
     }
+    if (!card) {
+      return;
+    }
     onUpdated?.({
       ...card,
       status: updated.status,
@@ -434,6 +477,9 @@ export const ContractCardDrawer = ({ card, onUpdated, onDeleted, intake = null }
   };
 
   const runSupplyPatch = async (payload: { status?: string; scan_note?: string; file?: File }) => {
+    if (!card) {
+      return;
+    }
     setError(null);
     try {
       rememberSupply(await patchSupply.mutateAsync({ contractId: card.id, payload }));
@@ -444,7 +490,7 @@ export const ContractCardDrawer = ({ card, onUpdated, onDeleted, intake = null }
 
   const onSubmitIdentity = async (event: FormEvent) => {
     event.preventDefault();
-    if (!identity || patchCard.isPending) {
+    if (!card || !identity || patchCard.isPending) {
       return;
     }
     setError(null);
@@ -464,7 +510,32 @@ export const ContractCardDrawer = ({ card, onUpdated, onDeleted, intake = null }
   const onSubmitBlank = async (event: FormEvent) => {
     event.preventDefault();
     const payload = requisitesPayload(form);
-    if (!payload || !poaFieldsReady(form) || saveBlank.isPending) {
+    if (!payload || savePending) {
+      return;
+    }
+    if (isDraft) {
+      if (!draft || !draftReady) {
+        return;
+      }
+      setError(null);
+      try {
+        const updated = await saveDirectoryBlank.mutateAsync({
+          counterpartyId: draft.counterpartyId,
+          payload,
+        });
+        setIssuedNumber(updated.number);
+        if (updated.contract_date !== undefined) {
+          setContractDate(updated.contract_date);
+        }
+        if (typeof updated.requisites_complete === "boolean") {
+          setRequisitesComplete(updated.requisites_complete);
+        }
+      } catch (err) {
+        setError(getErrorMessage(err));
+      }
+      return;
+    }
+    if (!card || !poaFieldsReady(form)) {
       return;
     }
     setError(null);
@@ -527,8 +598,8 @@ export const ContractCardDrawer = ({ card, onUpdated, onDeleted, intake = null }
       setSourceText(null);
       return;
     }
-    // PDF без текста — скан: та же колонка масштаба, что у фото.
-    if (isPdfFile(file) && !text) {
+    // Любой PDF — сам лист и масштаб скана, даже если слой текста непустой.
+    if (isPdfFile(file)) {
       setSourceVisual("pdf");
       setSourceText(null);
       rememberSourceUrl(URL.createObjectURL(file));
@@ -546,7 +617,14 @@ export const ContractCardDrawer = ({ card, onUpdated, onDeleted, intake = null }
     setError(null);
     stageSource(file);
     try {
-      const parsed = await parseCard.mutateAsync({ contractId: card.id, file });
+      const parsed = isDraft
+        ? await parseFile.mutateAsync(file)
+        : card
+          ? await parseCard.mutateAsync({ contractId: card.id, file })
+          : null;
+      if (!parsed) {
+        return;
+      }
       revealParsedSource(file, visibleSourceText(parsed.source_text));
       setForm((current) => mergeParsedFields(current, parsed));
       setDoubtful(new Set(parsed.doubtful ?? []));
@@ -569,6 +647,9 @@ export const ContractCardDrawer = ({ card, onUpdated, onDeleted, intake = null }
   };
 
   const download = async (kind: "contract" | "edo", format: "docx" | "pdf") => {
+    if (!card) {
+      return;
+    }
     setError(null);
     try {
       if (kind === "contract") {
@@ -582,6 +663,9 @@ export const ContractCardDrawer = ({ card, onUpdated, onDeleted, intake = null }
   };
 
   const confirmDelete = async () => {
+    if (!card) {
+      return;
+    }
     setDeleteError(null);
     try {
       await removeCard.mutateAsync(card.id);
@@ -601,6 +685,13 @@ export const ContractCardDrawer = ({ card, onUpdated, onDeleted, intake = null }
         ) : null}
       </h3>
       {error && <Alert tone="error">{error}</Alert>}
+      {isDraft && issuedNumber ? (
+        <p style={{ margin: 0 }}>
+          Номер <span>{issuedNumber}</span>
+        </p>
+      ) : null}
+      {!isDraft && (
+      <>
       <form
         aria-label="Данные карточки"
         onSubmit={(event) => void onSubmitIdentity(event)}
@@ -683,6 +774,8 @@ export const ContractCardDrawer = ({ card, onUpdated, onDeleted, intake = null }
           onPdf={() => void download("edo", "pdf")}
         />
       </div>
+      </>
+      )}
       {reviewWarning && <Alert tone="warning">{reviewWarning}</Alert>}
       <form
         aria-label="Реквизиты договора"
@@ -768,15 +861,27 @@ export const ContractCardDrawer = ({ card, onUpdated, onDeleted, intake = null }
             )}
             <SupplyContractFields form={form} doubtful={doubtful} onChange={setField} />
             <div>
-              <Button type="submit" disabled={!blankReady || saveBlank.isPending} title={blankTitle}>
+              <Button
+                type="submit"
+                disabled={(isDraft ? !draftReady : !blankReady) || savePending}
+                title={saveTitle}
+              >
                 Сохранить реквизиты
               </Button>
             </div>
-            <div>
-              <Button type="button" variant="danger" onClick={() => setConfirmOpen(true)}>
-                Удалить карточку
-              </Button>
-            </div>
+            {isDraft ? (
+              <div>
+                <Button type="button" variant="secondary" onClick={() => onCloseDraft?.()}>
+                  Закрыть
+                </Button>
+              </div>
+            ) : (
+              <div>
+                <Button type="button" variant="danger" onClick={() => setConfirmOpen(true)}>
+                  Удалить карточку
+                </Button>
+              </div>
+            )}
           </div>
         </div>
       </form>

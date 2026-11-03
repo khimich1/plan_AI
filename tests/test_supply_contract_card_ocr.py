@@ -395,3 +395,238 @@ def test_service_calls_text_provider_only_when_the_card_has_a_hole(tmp_path: Pat
     assert hole_result["fields"]["legal_address"] == "г. Ярославль, ул. Ленина, 1"
     assert hole_result["source_text"].startswith("ООО")
     assert _count(db_path) == 0
+
+
+def _text_pdf(lines: list[str]) -> bytes:
+    from reportlab.pdfbase import pdfmetrics
+    from reportlab.pdfbase.ttfonts import TTFont
+    from reportlab.pdfgen import canvas
+
+    if "DejaVu" not in pdfmetrics.getRegisteredFontNames():
+        pdfmetrics.registerFont(TTFont("DejaVu", "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf"))
+    buffer = BytesIO()
+    document = canvas.Canvas(buffer)
+    document.setFont("DejaVu", 12)
+    top = 800
+    for line in lines:
+        document.drawString(72, top, line)
+        top -= 18
+    document.save()
+    return buffer.getvalue()
+
+
+class _ImageRecognizer:
+    def __init__(self, payload: dict) -> None:
+        self.payload = payload
+        self.calls = 0
+
+    async def __call__(self, data: bytes, *, filename: str) -> dict:
+        self.calls += 1
+        return self.payload
+
+
+class _FailingRecognizer:
+    def __init__(self) -> None:
+        self.calls = 0
+
+    async def __call__(self, data: bytes, *, filename: str) -> dict:
+        self.calls += 1
+        raise RuntimeError("сеть недоступна")
+
+
+class _TextChat:
+    def __init__(self, payload: dict | None = None) -> None:
+        self.payload = payload or {}
+        self.calls = 0
+
+    async def complete_text_json(self, *, user_text: str) -> tuple[dict, float]:
+        self.calls += 1
+        if not self.payload:
+            raise AssertionError("текстовый чат не вызывается")
+        return self.payload, 0.0
+
+
+def _service(tmp_path: Path, recognizer: object, text: _TextChat) -> SupplyContractService:
+    return SupplyContractService(
+        db_path=str(tmp_path / "unused.db"),
+        card_recognizer=recognizer,
+        card_text_provider=text,
+    )
+
+
+def _read(service: SupplyContractService, data: bytes, filename: str) -> dict:
+    return asyncio.run(service._read_card(data, filename=filename))
+
+
+def test_pdf_text_image_is_called_once_and_skips_text_chat(tmp_path: Path) -> None:
+    recognizer = _ImageRecognizer(
+        {
+            "fields": {
+                "inn": "7604010011",
+                "legal_address": "г. Казань, ул. Баумана, 1",
+                "full_name": "ОБЩЕСТВО РОМАШКА",
+                "short_name": "Ромашка",
+                "signatory_name": "Иванов Иван Иванович",
+                "bank_name": "ПАО Тест",
+            },
+            "banks": [],
+        }
+    )
+    text = _TextChat()
+    service = _service(tmp_path, recognizer, text)
+    data = _text_pdf(
+        [
+            "ООО «Ромашка»",
+            "ОГРН 1027600000009",
+            "Юридический адрес: г. Ярославль, ул. Ленина, 1",
+        ]
+    )
+
+    result = _read(service, data, "hole.pdf")
+
+    assert recognizer.calls == 1
+    assert text.calls == 0
+    assert result["fields"]["inn"] == "7604010011"
+    assert "inn" not in result["doubtful"]
+    assert result["fields"]["ogrn"] == "1027600000009"
+    assert result["fields"]["legal_address"] == "г. Ярославль, ул. Ленина, 1"
+    assert "legal_address" not in result["doubtful"]
+    assert result["fields"]["full_name"] == "Общество с ограниченной ответственностью «Ромашка»"
+    assert result["fields"]["short_name"] == "Ромашка"
+    assert "full_name" not in result["doubtful"]
+    assert "short_name" not in result["doubtful"]
+    assert result["fields"]["signatory_name"] == "Иванов Иван Иванович"
+    assert "signatory_name" in result["doubtful"]
+    assert result["fields"]["bank_name"] == "ПАО Тест"
+    assert "bank_name" in result["doubtful"]
+    assert "ОГРН" in result["source_text"]
+
+
+def test_pdf_text_image_fills_empty_address_as_doubtful(tmp_path: Path) -> None:
+    recognizer = _ImageRecognizer(
+        {
+            "fields": {
+                "ogrn": "1027600000009",
+                "legal_address": "г. Казань, ул. Баумана, 1",
+            },
+            "banks": [],
+        }
+    )
+    service = _service(tmp_path, recognizer, _TextChat())
+    data = _text_pdf(["ИНН 7604010011"])
+
+    result = _read(service, data, "address.pdf")
+
+    assert recognizer.calls == 1
+    assert result["fields"]["legal_address"] == "г. Казань, ул. Баумана, 1"
+    assert "legal_address" in result["doubtful"]
+    assert result["fields"]["ogrn"] == "1027600000009"
+    assert "ogrn" not in result["doubtful"]
+
+
+def test_pdf_text_image_keeps_kpp_doubtful_and_drops_bad_inn(tmp_path: Path) -> None:
+    recognizer = _ImageRecognizer(
+        {
+            "fields": {
+                "inn": "7604010010",
+                "kpp": "760401001",
+                "ogrn": "1027600000009",
+            },
+            "banks": [],
+        }
+    )
+    service = _service(tmp_path, recognizer, _TextChat())
+    data = _text_pdf(["Карточка покупателя"])
+
+    result = _read(service, data, "digits.pdf")
+
+    assert result["fields"]["inn"] is None
+    assert result["fields"]["kpp"] == "760401001"
+    assert "kpp" in result["doubtful"]
+    assert result["fields"]["ogrn"] == "1027600000009"
+
+
+def test_pdf_text_image_does_not_write_two_bank_bundles(tmp_path: Path) -> None:
+    recognizer = _ImageRecognizer(
+        {
+            "fields": {
+                "inn": "7604010011",
+                "bank_name": "Альфа",
+                "account": "40702810000000000007",
+                "corr_account": "30101810000000000760",
+                "bik": "044525225",
+            },
+            "banks": [
+                {
+                    "bank_name": "Альфа",
+                    "account": "40702810000000000007",
+                    "corr_account": "30101810000000000760",
+                    "bik": "044525225",
+                },
+                {
+                    "bank_name": "ВТБ",
+                    "account": "40702810900000000009",
+                    "corr_account": "30101810400000000225",
+                    "bik": "044525974",
+                },
+            ],
+        }
+    )
+    service = _service(tmp_path, recognizer, _TextChat())
+    data = _text_pdf(["ОГРН 1027600000009"])
+
+    result = _read(service, data, "banks.pdf")
+
+    assert recognizer.calls == 1
+    assert len(result["banks"]) == 2
+    assert result["fields"]["inn"] == "7604010011"
+    assert result["fields"]["bank_name"] is None
+    assert result["fields"]["account"] is None
+    assert result["fields"]["corr_account"] is None
+    assert result["fields"]["bik"] is None
+
+
+def test_pdf_text_image_keeps_rule_fields_when_recognition_fails(tmp_path: Path) -> None:
+    recognizer = _FailingRecognizer()
+    service = _service(tmp_path, recognizer, _TextChat())
+    data = _text_pdf(
+        [
+            "КПП 760401001",
+            "Юридический адрес: г. Ярославль, ул. Ленина, 1",
+        ]
+    )
+
+    result = _read(service, data, "offline.pdf")
+
+    assert recognizer.calls == 1
+    assert result["fields"]["kpp"] == "760401001"
+    assert result["fields"]["legal_address"] == "г. Ярославль, ул. Ленина, 1"
+    assert result["fields"]["inn"] is None
+    assert result["fields"]["ogrn"] is None
+
+
+def test_pdf_text_image_skips_vision_when_both_numbers_exist(tmp_path: Path) -> None:
+    recognizer = _ImageRecognizer({"fields": {"inn": "7707083893"}, "banks": []})
+    text = _TextChat({"legal_address": "г. Казань, ул. Баумана, 1"})
+    service = _service(tmp_path, recognizer, text)
+    data = _text_pdf(["ИНН 7604010011", "ОГРН 1027600000009"])
+
+    result = _read(service, data, "complete.pdf")
+
+    assert recognizer.calls == 0
+    assert text.calls == 1
+    assert result["fields"]["inn"] == "7604010011"
+    assert result["fields"]["ogrn"] == "1027600000009"
+    assert result["fields"]["legal_address"] == "г. Казань, ул. Баумана, 1"
+
+
+def test_pdf_text_image_is_not_used_for_docx(tmp_path: Path) -> None:
+    recognizer = _ImageRecognizer({"fields": {"inn": "7707083893"}, "banks": []})
+    text = _TextChat()
+    service = _service(tmp_path, recognizer, text)
+
+    result = _read(service, _docx(["ИНН 7604010011", "ОГРН 1027600000009"]), "card.docx")
+
+    assert recognizer.calls == 0
+    assert result["fields"]["inn"] == "7604010011"
+    assert result["fields"]["ogrn"] == "1027600000009"

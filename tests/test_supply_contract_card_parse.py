@@ -89,6 +89,7 @@ def _card_pdf() -> bytes:
     for line in (
         "ООО «Ромашка»",
         "ИНН 760 4 010011",
+        "ОГРН 1027600000009",
         "Р/с 40702810000000000007",
         "Генеральный директор Иванов Иван Иванович",
     ):
@@ -342,13 +343,15 @@ def test_unreadable_pdf_yields_empty_text() -> None:
 def test_text_pdf_does_not_call_vision(tmp_path: Path) -> None:
     db_path = _fresh_db(tmp_path)
     _seed(db_path)
-    service = SupplyContractService(db_path=db_path, card_recognizer=_BoomVision())
+    vision = _BoomVision()
+    service = SupplyContractService(db_path=db_path, card_recognizer=vision)
 
     result = __import__("asyncio").run(
         service.parse_for_kp(1, _card_pdf(), filename="card.pdf", user=ADMIN)
     )
 
     assert result["fields"]["inn"] == "7604010011"
+    assert result["fields"]["ogrn"] == "1027600000009"
     assert result["verify_failed"] is False
     assert _count(db_path) == 0
 
@@ -545,4 +548,128 @@ def test_okved_label_without_code_is_doubtful() -> None:
     assert parsed.fields["okved"] is None
     assert "okved" in parsed.doubtful
     assert "okved" not in card_holes(parsed)
+
+
+def test_stack_zips_inn_kpp_and_ogrn_after_the_labels() -> None:
+    result = parse_card_text(
+        "ИНН\n"
+        "КПП\n"
+        "ОГРН/ОГРНИП\n"
+        "1686032189\n"
+        "168601001\n"
+        "1231600052166\n"
+    )
+
+    assert result.fields["inn"] == "1686032189"
+    assert result.fields["kpp"] == "168601001"
+    assert result.fields["ogrn"] == "1231600052166"
+
+
+def test_same_line_inn_and_kpp_stay_untouched_by_stack() -> None:
+    result = parse_card_text("ИНН 7604010011 КПП 760401001\n1686032189\n168601001")
+
+    assert result.fields["inn"] == "7604010011"
+    assert result.fields["kpp"] == "760401001"
+
+
+def test_okpo_after_inn_and_kpp_does_not_become_ogrn() -> None:
+    result = parse_card_text(
+        "ИНН\n"
+        "КПП\n"
+        "ОГРН\n"
+        "1686032189\n"
+        "168601001\n"
+        "12345678\n"
+        "1231600052166\n"
+    )
+
+    assert result.fields["inn"] == "1686032189"
+    assert result.fields["kpp"] == "168601001"
+    assert result.fields["ogrn"] is None
+
+
+def test_stack_stops_on_bad_inn_without_shifting_kpp() -> None:
+    result = parse_card_text(
+        "ИНН\n"
+        "КПП\n"
+        "ОГРН\n"
+        "7604010010\n"
+        "168601001\n"
+        "1231600052166\n"
+    )
+
+    assert result.fields["inn"] is None
+    assert result.fields["kpp"] is None
+    assert result.fields["ogrn"] is None
+
+
+def test_wrapped_name_joins_two_lines_until_the_short_label() -> None:
+    result = parse_card_text(
+        "ПОЛНОЕ НАИМЕНОВАНИЕ\n"
+        "ОБЩЕСТВО С ОГРАНИЧЕННОЙ ОТВЕТСТВЕННОСТЬЮ\n"
+        'ТОРГОВЫЙ ДОМ "УНИСТРОЙ МАРКЕТ"\n'
+        "ЛИШНЯЯ СТРОКА НАЗВАНИЯ\n"
+        "КРАТКОЕ НАИМЕНОВАНИЕ\n"
+        "УНИСТРОЙ\n"
+    )
+
+    assert result.fields["full_name"] == (
+        'ОБЩЕСТВО С ОГРАНИЧЕННОЙ ОТВЕТСТВЕННОСТЬЮ ТОРГОВЫЙ ДОМ "УНИСТРОЙ МАРКЕТ"'
+    )
+    assert "ЛИШНЯЯ" not in result.fields["full_name"]
+    assert "УНИСТРОЙ" != result.fields["full_name"]
+    assert result.fields["short_name"] == "УНИСТРОЙ"
+    assert "full_name" in result.doubtful
+    assert "short_name" in result.doubtful
+
+
+def test_wrapped_name_does_not_take_the_kpp_line() -> None:
+    result = parse_card_text("ПОЛНОЕ НАИМЕНОВАНИЕ\nКПП\n168601001\n")
+
+    assert result.fields["full_name"] != "КПП"
+    assert "КПП" not in (result.fields["full_name"] or "")
+
+
+def test_wrapped_name_does_not_frame_a_quoted_name() -> None:
+    result = parse_card_text(
+        "ООО «Ромашка»\n"
+        "Общество с ограниченной ответственностью «Ромашка»\n"
+    )
+
+    assert result.fields["full_name"] == "Общество с ограниченной ответственностью «Ромашка»"
+    assert result.fields["short_name"] == "Ромашка"
+    assert "full_name" not in result.doubtful
+    assert "short_name" not in result.doubtful
+
+
+def test_director_line_takes_one_following_name() -> None:
+    result = parse_card_text(
+        "ГЕНЕРАЛЬНЫЙ ДИРЕКТОР\n"
+        "Иванов Иван Иванович\n"
+        "Ещё одна строка\n"
+    )
+
+    assert result.fields["signatory_name"] == "Иванов Иван Иванович"
+    assert "Ещё" not in (result.fields["signatory_name"] or "")
+    assert "signatory_name" in result.doubtful
+
+
+def test_director_line_plain_title_takes_one_row() -> None:
+    result = parse_card_text("ДИРЕКТОР\nПетров Пётр Петрович\nСекретарь\n")
+
+    assert result.fields["signatory_name"] == "Петров Пётр Петрович"
+    assert "signatory_name" in result.doubtful
+
+
+def test_ogrnip_stack_without_kpp_fills_twelve_and_fifteen_digits() -> None:
+    result = parse_card_text(
+        "ИНН\n"
+        "ОГРНИП\n"
+        "500100732259\n"
+        "304500116000157\n"
+    )
+
+    assert result.fields["inn"] == "500100732259"
+    assert result.fields["ogrn"] == "304500116000157"
+    assert result.fields["kpp"] is None
 

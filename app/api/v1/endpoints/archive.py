@@ -33,6 +33,9 @@ from app.schemas.archive import (
     BindCounterpartyRequest,
     CreateAndBindCounterpartyRequest,
     CapacitySnapshotResponse,
+    DirectoryContractLink,
+    DirectoryContractRef,
+    DirectoryListOut,
     KpReadinessPositionsResponse,
     ArchivePaymentRequest,
     InvoiceExportRequest,
@@ -330,6 +333,71 @@ def _call_contract_card(action: Callable[[], Any], *, where: str) -> Any:
             exc,
             where=where,
             detail=str(exc) or MSG_VALIDATION,
+        )
+
+
+@router.get("/directory", response_model=DirectoryListOut)
+def search_archive_directory(
+    q: str = Query(default=""),
+    user: dict = Depends(require_roles("admin", "manager")),
+    service: SupplyContractService = Depends(get_supply_contract_service),
+) -> DirectoryListOut:
+    items = _call_contract_card(
+        lambda: service.search_directory(q, user=user),
+        where="archive.search_directory",
+    )
+    return DirectoryListOut(items=items, count=len(items))
+
+
+@router.post("/directory/{counterparty_id}/contract", response_model=DirectoryContractRef)
+def ensure_archive_directory_contract(
+    counterparty_id: int,
+    payload: DirectoryContractLink | None = None,
+    user: dict = Depends(require_roles("admin", "manager")),
+    service: SupplyContractService = Depends(get_supply_contract_service),
+) -> dict:
+    body = payload or DirectoryContractLink()
+    return _call_contract_card(
+        lambda: service.ensure_directory_contract(
+            counterparty_id,
+            user=user,
+            number=body.number,
+            contract_id=body.contract_id,
+        ),
+        where="archive.ensure_directory_contract",
+    )
+
+
+@router.post(
+    "/directory/{counterparty_id}/contract-blank",
+    response_model=ContractCardOut,
+)
+def save_archive_directory_contract_blank(
+    counterparty_id: int,
+    payload: SupplyContractCreate,
+    user: dict = Depends(require_roles("admin", "manager")),
+    service: SupplyContractService = Depends(get_supply_contract_service),
+) -> dict:
+    """Первый готовый бланк выдаёт номер. Неготовые реквизиты строку не создают."""
+    try:
+        return service.save_directory_blank(counterparty_id, payload, user=user)
+    except SupplyContractNotFoundError as exc:
+        raise_not_found_client_error(
+            exc,
+            where="archive.save_directory_contract_blank",
+            detail=str(exc) or MSG_ARCHIVE_NOT_FOUND,
+        )
+    except SupplyContractValidationError as exc:
+        raise_bad_request_client_error(
+            exc,
+            where="archive.save_directory_contract_blank",
+            detail=str(exc) or MSG_VALIDATION,
+        )
+    except SupplyContractFieldError as exc:
+        raise_unprocessable_client_error(
+            exc,
+            where="archive.save_directory_contract_blank",
+            detail=str(exc) or MSG_UNPROCESSABLE,
         )
 
 

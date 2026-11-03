@@ -150,3 +150,29 @@ export type SupplyContractPatchPayload = {
   contract_date?: string;
   file?: File;
 };
+
+export type DirectoryContractRef = {
+  id: number;
+  number: string;
+};
+
+export type DirectoryContractLink = {
+  number?: string;
+  contract_id?: number;
+};
+
+export type DirectoryClient = {
+  id: number;
+  name: string;
+  inn: string | null;
+  kpp: string | null;
+  code: string;
+  contract: DirectoryContractRef | null;
+  linkable: DirectoryContractRef | null;
+  candidates: DirectoryContractRef[];
+};
+
+export type DirectoryList = {
+  items: DirectoryClient[];
+  count: number;
+};

@@ -19,7 +19,9 @@ vi.mock("@/features/commercial-archive/api/archiveApi", () => ({
     patchContractCard: vi.fn(),
     patchSupplyContract: vi.fn(),
     saveContractRequisites: vi.fn(),
+    saveDirectoryBlank: vi.fn(),
     parseContractCard: vi.fn(),
+    parseContractCardFile: vi.fn(),
     downloadContractDocument: vi.fn(),
     downloadContractEdoAgreement: vi.fn(),
     getContractCard: vi.fn(),
@@ -615,7 +617,6 @@ describe("ContractCardDrawer", () => {
   it.each([
     ["card.docx", ""],
     ["card.xlsx", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"],
-    ["card.pdf", "application/pdf"],
   ])("shows the file name and source text for %s without zoom", async (name, type) => {
     vi.mocked(archiveApi.parseContractCard).mockResolvedValue({
       fields: { inn: "440117229007" },
@@ -639,6 +640,33 @@ describe("ContractCardDrawer", () => {
     expect(screen.queryByRole("button", { name: "Уменьшить" })).not.toBeInTheDocument();
     expect(screen.queryByRole("img", { name: "Карточка контрагента" })).not.toBeInTheDocument();
     expect(archiveApi.saveContractRequisites).not.toHaveBeenCalled();
+  });
+
+  it("shows a PDF with source text as the sheet with zoom", async () => {
+    vi.mocked(archiveApi.parseContractCard).mockResolvedValue({
+      fields: { inn: "440117229007" },
+      doubtful: [],
+      accounts: [],
+      verify_failed: false,
+      source_text: "Строка card.pdf\nИНН 440117229007",
+    });
+    renderDrawer();
+
+    fireEvent.change(screen.getByLabelText("Файл карточки"), {
+      target: { files: [new File(["card"], "card.pdf", { type: "application/pdf" })] },
+    });
+
+    const preview = await screen.findByTitle("Карточка контрагента");
+    expect(preview.tagName).toBe("IFRAME");
+    expect(preview).toHaveStyle({ width: "100%" });
+    expect(screen.getByText("card.pdf")).toBeInTheDocument();
+    expect(screen.queryByLabelText("Текст карточки")).not.toBeInTheDocument();
+    expect(screen.queryByText(/Строка card\.pdf/)).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "По ширине" })).toBeInTheDocument();
+    expect(archiveApi.saveContractRequisites).not.toHaveBeenCalled();
+
+    fireEvent.click(screen.getByRole("button", { name: "Увеличить" }));
+    expect(preview).toHaveStyle({ width: "125%" });
   });
 
   it("shows a JPEG card as a picture with zoom", async () => {
@@ -778,5 +806,94 @@ describe("ContractCardDrawer", () => {
     });
     expect(archiveApi.deleteContractCard).toHaveBeenCalledWith(9);
     expect(onDeleted).toHaveBeenCalledTimes(1);
+  });
+
+  it("parses a draft file without creating a contract row", async () => {
+    vi.mocked(archiveApi.parseContractCardFile).mockResolvedValue({
+      fields: { full_name: "ООО Секлюц", legal_form: "ooo" },
+      doubtful: [],
+      accounts: [],
+      verify_failed: false,
+    });
+    wrap(<ContractCardDrawer draft={{ counterpartyId: 7, name: "УНИСТРОЙ", inn: "7701000001" }} />);
+
+    expect(screen.queryByRole("form", { name: "Данные карточки" })).not.toBeInTheDocument();
+    expect(screen.queryByLabelText("Статус")).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Удалить карточку" })).not.toBeInTheDocument();
+
+    const file = new File(["card"], "card.docx", {
+      type: "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+    });
+    fireEvent.change(screen.getByLabelText("Файл карточки"), { target: { files: [file] } });
+
+    await waitFor(() => {
+      expect(archiveApi.parseContractCardFile).toHaveBeenCalledWith(file);
+    });
+    expect(screen.getByLabelText("Полное наименование")).toHaveValue("ООО Секлюц");
+    expect(archiveApi.parseContractCard).not.toHaveBeenCalled();
+    expect(archiveApi.saveDirectoryBlank).not.toHaveBeenCalled();
+    expect(archiveApi.createSupplyContract).not.toHaveBeenCalled();
+    expect(archiveApi.getContractCard).not.toHaveBeenCalled();
+  });
+
+  it("does not call contract-blank while the draft is incomplete", () => {
+    wrap(<ContractCardDrawer draft={{ counterpartyId: 7, name: "УНИСТРОЙ", inn: "7701000001" }} />);
+
+    const save = screen.getByRole("button", { name: "Сохранить реквизиты" });
+    expect(save).toBeDisabled();
+    fireEvent.change(screen.getByLabelText("Вид"), { target: { value: "ooo" } });
+    expect(save).toBeDisabled();
+    expect(save).toHaveAttribute("title", "Заполните реквизиты");
+    fireEvent.submit(screen.getByRole("form", { name: "Реквизиты договора" }));
+    expect(archiveApi.saveDirectoryBlank).not.toHaveBeenCalled();
+    expect(archiveApi.saveContractRequisites).not.toHaveBeenCalled();
+  });
+
+  it("issues one number for a complete draft and keeps it on a second save", async () => {
+    vi.mocked(archiveApi.saveDirectoryBlank).mockResolvedValue({
+      id: 12,
+      number: "1032/11/26",
+      contract_date: "2026-11-02",
+      requisites_complete: true,
+    });
+    wrap(<ContractCardDrawer draft={{ counterpartyId: 7, name: "УНИСТРОЙ", inn: "7701000001" }} />);
+
+    fillBlank();
+    fireEvent.change(screen.getByLabelText("Должность"), { target: { value: "Директор" } });
+    fireEvent.change(screen.getByLabelText("ИНН"), { target: { value: "7701000001" } });
+    fireEvent.change(screen.getByLabelText("КПП"), { target: { value: "770101001" } });
+    fireEvent.click(screen.getByRole("button", { name: "Сохранить реквизиты" }));
+
+    expect(await screen.findByText("1032/11/26")).toBeInTheDocument();
+    expect(archiveApi.saveDirectoryBlank).toHaveBeenCalledTimes(1);
+    expect(archiveApi.saveDirectoryBlank).toHaveBeenCalledWith(
+      7,
+      expect.objectContaining({ legal_form: "ooo", kpp: "770101001", full_name: "ООО Секлюц" }),
+    );
+    expect(archiveApi.saveContractRequisites).not.toHaveBeenCalled();
+
+    fireEvent.click(screen.getByRole("button", { name: "Сохранить реквизиты" }));
+    await waitFor(() => {
+      expect(archiveApi.saveDirectoryBlank).toHaveBeenCalledTimes(2);
+    });
+    expect(screen.getByText("1032/11/26")).toBeInTheDocument();
+    expect(screen.queryByText("1033/11/26")).not.toBeInTheDocument();
+  });
+
+  it("closes a draft before save without writing a contract", () => {
+    const onCloseDraft = vi.fn();
+    wrap(
+      <ContractCardDrawer
+        draft={{ counterpartyId: 7, name: "УНИСТРОЙ", inn: "7701000001" }}
+        onCloseDraft={onCloseDraft}
+      />,
+    );
+
+    fillBlank();
+    fireEvent.click(screen.getByRole("button", { name: "Закрыть" }));
+
+    expect(onCloseDraft).toHaveBeenCalledTimes(1);
+    expect(archiveApi.saveDirectoryBlank).not.toHaveBeenCalled();
+    expect(archiveApi.createSupplyContract).not.toHaveBeenCalled();
   });
 });

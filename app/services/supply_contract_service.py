@@ -12,6 +12,7 @@ from datetime import date
 from pathlib import Path
 from typing import Any
 
+from app.repositories.contract_client_link import normalize_inn
 from app.repositories.counterparties_repository import CounterpartiesRepository
 from app.repositories.kp_offers_repository import KpOffersRepository
 from app.repositories.supply_contract_repository import SupplyContractRepository
@@ -48,6 +49,15 @@ from core.supply_contract import (
 
 _SCANS_DIR = PROJECT_ROOT / ".app_data" / "supply-contract-scans"
 from core.supply_contract_card_parse import (
+    FIELD_NAMES,
+    CardParseResult,
+    accept_account,
+    accept_bik,
+    accept_bundle,
+    accept_corr_account,
+    accept_inn,
+    accept_kpp,
+    accept_ogrn,
     card_holes,
     extract_docx_text,
     extract_pdf_text,
@@ -94,6 +104,24 @@ _EDO_REQUIRED = (
     "email",
 )
 _PDF_TIMEOUT_SECONDS = 60
+_IMAGE_BANK_KEYS = ("bank_name", "account", "corr_account", "bik")
+_IMAGE_DOUBTFUL = (
+    "kpp",
+    "legal_address",
+    "postal_address",
+    "full_name",
+    "short_name",
+    "signatory_name",
+    "bank_name",
+)
+_IMAGE_DIGITS = {
+    "inn": accept_inn,
+    "kpp": accept_kpp,
+    "ogrn": accept_ogrn,
+    "bik": accept_bik,
+    "corr_account": accept_corr_account,
+}
+_DIRECTORY_LIMIT = 10
 _DOWNLOAD_FORMATS = frozenset({"docx", "pdf"})
 _log = logging.getLogger(__name__)
 
@@ -431,13 +459,38 @@ class SupplyContractService:
         if is_xlsx(data):
             return await self._read_text(extract_xlsx_text(data))
         if is_pdf(data):
-            text = extract_pdf_text(data)
-            if has_text_layer(text):
-                return await self._read_text(text)
-            return await self._recognize_image(data, filename=filename or "scan.pdf")
+            return await self._read_pdf(data, filename=filename)
         if _is_image(data):
             return await self._recognize_image(data, filename=filename or "card.jpg")
         raise SupplyContractValidationError(MSG_UNSUPPORTED_CARD)
+
+    async def _read_pdf(self, data: bytes, *, filename: str) -> dict[str, Any]:
+        text = extract_pdf_text(data)
+        if not has_text_layer(text):
+            return await self._recognize_image(data, filename=filename or "scan.pdf")
+        parsed = parse_card_text(text)
+        if parsed.fields.get("inn") and parsed.fields.get("ogrn"):
+            return await self._read_text(text)
+        return await self._fill_pdf_from_image(parsed, data, filename=filename)
+
+    async def _fill_pdf_from_image(
+        self,
+        parsed: CardParseResult,
+        data: bytes,
+        *,
+        filename: str,
+    ) -> dict[str, Any]:
+        """Один раз картинка. Текстовый добор на этом пути не вызывается."""
+        try:
+            image = await self._recognize_image(data, filename=filename or "scan.pdf")
+        except AssertionError:
+            raise
+        except Exception:
+            _log.warning("Не удалось распознать лист PDF, оставлены поля правил")
+            return parsed.as_dict()
+        if isinstance(image, dict):
+            _copy_image_into_empty(parsed, image)
+        return parsed.as_dict()
 
     async def _read_text(self, text: str) -> dict[str, Any]:
         parsed = parse_card_text(text)
@@ -493,6 +546,80 @@ class SupplyContractService:
         if updated is None:
             raise SupplyContractNotFoundError(f"Договор №{contract_id} не найден")
         return _present(updated)
+
+    def search_directory(self, query: str, *, user: dict) -> list[dict[str, Any]]:
+        """Активные клиенты по имени и ИНН. Пустой запрос и один символ — пусто.
+
+        Код 1С в условие не входит. У менеджера только ``is_client``. Не больше 10 строк.
+        """
+        self._assert_writer(user)
+        needle = _nonblank(query)
+        if len(needle) < 2:
+            return []
+        clients_only = user.get("role") != "admin"
+        parties = CounterpartiesRepository(db_path=self.repository.db_path)
+        rows = parties.search(needle, limit=_DIRECTORY_LIMIT, clients_only=clients_only)
+        if not rows:
+            return []
+        client_ids = [int(row["id"]) for row in rows]
+        active = self.repository.active_contract_refs(client_ids)
+        linkable = self.repository.linkable_contract_refs()
+        candidates = self.repository.free_contract_refs_by_inn()
+        return [_directory_client(row, active, linkable, candidates) for row in rows]
+
+    def ensure_directory_contract(
+        self,
+        counterparty_id: int,
+        *,
+        user: dict,
+        number: str | None = None,
+        contract_id: int | None = None,
+    ) -> dict[str, Any]:
+        """Привязать вписанный номер или выбранную карточку.
+
+        Без номера и без id строка не создаётся. Повтор того же номера возвращает ту же строку.
+        """
+        self._assert_writer(user)
+        result = self.repository.ensure_directory_contract(
+            int(counterparty_id),
+            user_id=int(user["id"]),
+            clients_only=user.get("role") != "admin",
+            number=number,
+            contract_id=contract_id,
+        )
+        return _directory_link_result(result)
+
+    def save_directory_blank(
+        self,
+        counterparty_id: int,
+        payload: SupplyContractCreate,
+        *,
+        user: dict,
+    ) -> dict[str, Any]:
+        """Первый готовый бланк вставляет строку и один номер. Повтор номер не меняет.
+
+        Неготовые реквизиты, включая КПП для ООО и АО, строку не создают.
+        """
+        self._assert_writer(user)
+        fields = self._validated_fields(payload)
+        today = self._today or date.today()
+        stored_date = payload.contract_date or today
+        if not requisites_ready({**fields, "contract_date": stored_date.isoformat()}):
+            raise SupplyContractValidationError(MSG_FILL_REQUISITES)
+        result = self.repository.save_directory_blank(
+            int(counterparty_id),
+            fields,
+            user_id=int(user["id"]),
+            manager_name=str(user["username"]),
+            clients_only=user.get("role") != "admin",
+            number_date=today,
+            contract_date=stored_date,
+            update_date=payload.contract_date,
+        )
+        _raise_directory_refusal(result)
+        if result.row is None:
+            raise SupplyContractNotFoundError("Контрагент не найден")
+        return _with_card_name(_present(result.row))
 
     def search_cards(self, query: str, *, user: dict) -> list[dict[str, Any]]:
         """Пустой запрос — все карточки. Иначе подстрока без регистра по имени, ИНН и номеру.
@@ -964,6 +1091,54 @@ def _wizard_card_hit(card: dict[str, Any], parties: CounterpartiesRepository) ->
     }
 
 
+def _raise_directory_refusal(result: Any) -> None:
+    if result.refusal == "inactive":
+        raise SupplyContractValidationError("Контрагент неактивен")
+    if result.refusal == "missing":
+        raise SupplyContractNotFoundError("Контрагент не найден")
+    if result.refusal == "missing_card":
+        raise SupplyContractNotFoundError("Договор не найден")
+    if result.refusal in {"empty", "both"}:
+        raise SupplyContractValidationError("Укажите номер или карточку")
+    if result.refusal == "foreign":
+        raise SupplyContractValidationError("Номер уже у другого клиента")
+    if result.refusal == "inn":
+        raise SupplyContractValidationError("ИНН карточки не совпадает с клиентом")
+    if result.refusal == "occupied":
+        raise SupplyContractValidationError(f"Номер {result.hint or 'договора'} уже есть")
+    if result.refusal == "busy":
+        raise SupplyContractValidationError(duplicate_contract_message(str(result.hint or "")))
+
+
+def _directory_link_result(result: Any) -> dict[str, Any]:
+    _raise_directory_refusal(result)
+    if result.row is None:
+        raise SupplyContractNotFoundError("Контрагент не найден")
+    return {"id": int(result.row["id"]), "number": str(result.row["number"])}
+
+
+def _directory_client(
+    row: dict[str, Any],
+    active: dict[int, dict[str, Any]],
+    linkable: dict[int, dict[str, Any]],
+    candidates: dict[str, list[dict[str, Any]]],
+) -> dict[str, Any]:
+    client_id = int(row["id"])
+    contract = active.get(client_id)
+    inn = normalize_inn(row.get("inn"))
+    visible = [] if contract is not None or inn is None else list(candidates.get(inn, []))
+    return {
+        "id": client_id,
+        "name": str(row.get("name") or ""),
+        "inn": row.get("inn"),
+        "kpp": row.get("kpp"),
+        "code": str(row.get("code_1c") or ""),
+        "contract": contract,
+        "linkable": None if contract is not None else linkable.get(client_id),
+        "candidates": visible,
+    }
+
+
 def _card_matches(row: dict[str, Any], folded_query: str) -> bool:
     for key in ("imported_name", "full_name", "short_name", "inn", "number"):
         text = _nonblank(row.get(key))
@@ -1013,6 +1188,124 @@ def _delete_owned_scan(scans_dir: Path, stored: str) -> None:
     except ValueError:
         return
     path.unlink(missing_ok=True)
+
+
+def _copy_image_into_empty(parsed: CardParseResult, image: dict[str, Any]) -> None:
+    fields = image.get("fields") if isinstance(image.get("fields"), dict) else {}
+    skip_bank = _image_banks_block_fields(parsed, image.get("banks"))
+    written = _copy_image_digits(parsed, fields, skip_bank=skip_bank)
+    written.extend(_copy_image_texts(parsed, fields, skip_bank=skip_bank))
+    _mark_image_copies(parsed, written)
+
+
+def _image_banks_block_fields(parsed: CardParseResult, raw: Any) -> bool:
+    """Две связки остаются списком и в поля не пишутся."""
+    if len(parsed.banks) >= 2:
+        return True
+    bundles = _accepted_image_banks(raw)
+    if len(bundles) < 2:
+        return False
+    parsed.banks = bundles
+    return True
+
+
+def _accepted_image_banks(raw: Any) -> list[dict[str, Any]]:
+    if not isinstance(raw, list):
+        return []
+    bundles: list[dict[str, Any]] = []
+    for item in raw:
+        if not isinstance(item, dict):
+            continue
+        bundle = accept_bundle(
+            item.get("bank_name"),
+            str(item.get("account") or ""),
+            item.get("corr_account"),
+            str(item.get("bik") or ""),
+        )
+        if bundle:
+            bundles.append(bundle)
+    return bundles
+
+
+def _copy_image_digits(
+    parsed: CardParseResult,
+    fields: dict[str, Any],
+    *,
+    skip_bank: bool,
+) -> list[str]:
+    written: list[str] = []
+    for key in ("bik", "inn", "kpp", "ogrn", "corr_account"):
+        if _copy_one_digit(parsed, key, fields.get(key), skip_bank=skip_bank):
+            written.append(key)
+    if _copy_account(parsed, fields.get("account"), skip_bank=skip_bank):
+        written.append("account")
+    return written
+
+
+def _copy_one_digit(
+    parsed: CardParseResult,
+    key: str,
+    value: Any,
+    *,
+    skip_bank: bool,
+) -> bool:
+    if skip_bank and key in _IMAGE_BANK_KEYS:
+        return False
+    if parsed.fields.get(key) or value is None:
+        return False
+    accepted = _IMAGE_DIGITS[key](str(value))
+    if not accepted:
+        return False
+    parsed.fields[key] = accepted
+    return True
+
+
+def _copy_account(parsed: CardParseResult, value: Any, *, skip_bank: bool) -> bool:
+    if skip_bank or parsed.fields.get("account") or value is None:
+        return False
+    accepted = accept_account(str(value), parsed.fields.get("bik"))
+    if not accepted:
+        return False
+    parsed.fields["account"] = accepted
+    return True
+
+
+def _copy_image_texts(
+    parsed: CardParseResult,
+    fields: dict[str, Any],
+    *,
+    skip_bank: bool,
+) -> list[str]:
+    written: list[str] = []
+    for key in FIELD_NAMES:
+        if key in _IMAGE_DIGITS or key == "account":
+            continue
+        if skip_bank and key in _IMAGE_BANK_KEYS:
+            continue
+        if _copy_one_text(parsed, key, fields.get(key)):
+            written.append(key)
+    return written
+
+
+def _copy_one_text(parsed: CardParseResult, key: str, value: Any) -> bool:
+    if parsed.fields.get(key) or value is None:
+        return False
+    text = str(value).strip()
+    if key == "email":
+        text = normalize_email(text)
+    if not text:
+        return False
+    parsed.fields[key] = text
+    return True
+
+
+def _mark_image_copies(parsed: CardParseResult, written: list[str]) -> None:
+    for key in written:
+        if key in _IMAGE_DOUBTFUL:
+            if key not in parsed.doubtful:
+                parsed.doubtful.append(key)
+            continue
+        parsed.doubtful = [item for item in parsed.doubtful if item != key]
 
 
 def _require_counterparty_card(parsed: dict[str, Any]) -> None:

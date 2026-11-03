@@ -17,6 +17,8 @@ import type {
   ContractCardCreatePayload,
   ContractCardList,
   ContractCardPatchPayload,
+  DirectoryContractRef,
+  DirectoryList,
   SupplyContract,
   SupplyContractCreatePayload,
   SupplyContractParseResult,
@@ -235,6 +237,25 @@ export const archiveApi = {
     httpClient.post<SupplyContract>(
       `${BASE}/supply-contracts/${contractId}/replace`,
       JSON.stringify(payload),
+      { "Content-Type": "application/json" },
+    ),
+
+  searchDirectory: (q: string) => {
+    const params = new URLSearchParams({ q });
+    return httpClient.get<DirectoryList>(`${BASE}/directory?${params.toString()}`);
+  },
+
+  saveDirectoryBlank: (counterpartyId: number, payload: SupplyContractCreatePayload) =>
+    httpClient.post<SupplyContract & { requisites_complete: boolean }>(
+      `${BASE}/directory/${counterpartyId}/contract-blank`,
+      JSON.stringify(payload),
+      { "Content-Type": "application/json" },
+    ),
+
+  ensureDirectoryContract: (counterpartyId: number, body: { number?: string; contract_id?: number }) =>
+    httpClient.post<DirectoryContractRef>(
+      `${BASE}/directory/${counterpartyId}/contract`,
+      JSON.stringify(body),
       { "Content-Type": "application/json" },
     ),
 

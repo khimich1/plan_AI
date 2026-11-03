@@ -25,7 +25,12 @@ import {
   useSpecificationQuery,
   useSaveSpecificationMutation,
   useDownloadSpecificationMutation,
+  useEnsureDirectoryContractMutation,
+  useDirectoryQuery,
 } from "@/features/commercial-archive/hooks/useArchiveQueries";
+import { DirectoryContractActions } from "@/features/commercial-archive/components/ContractCardList";
+import { ContractCardDrawer } from "@/features/commercial-archive/components/ContractCardDrawer";
+import type { DirectoryClient } from "@/features/commercial-archive/types/supplyContract";
 import {
   holdBadgeLabel,
   holdCreatedByTitle,
@@ -294,6 +299,29 @@ const resolveMarchItems = (offer: ArchiveOfferDetails): ArchiveMarchItem[] => {
   }));
 };
 
+const MISSING_SUPPLY_CONTRACT = "Нет действующего договора поставки";
+
+const directoryChoiceClient = (
+  offer: ArchiveOfferDetails,
+  items: DirectoryClient[] | undefined,
+): DirectoryClient => {
+  const counterpartyId = offer.counterparty_id ?? 0;
+  const found = items?.find((item) => item.id === counterpartyId);
+  if (found) {
+    return found;
+  }
+  return {
+    id: counterpartyId,
+    name: offer.customer_name || "",
+    inn: offer.customer_inn ?? null,
+    kpp: offer.customer_kpp ?? null,
+    code: "",
+    contract: null,
+    linkable: null,
+    candidates: [],
+  };
+};
+
 const formatLinePrice = (discountedPrice: number | null, unitPrice: number | null): string => {
   if (discountedPrice !== null) {
     return formatMoney(discountedPrice);
@@ -328,11 +356,24 @@ export const OfferDetailsDrawer = ({ open, kpId, onClose }: Props) => {
   const [bindCode1c, setBindCode1c] = useState("");
   const [bindInn, setBindInn] = useState("");
   const [bindKpp, setBindKpp] = useState("");
+  const [recordedContract, setRecordedContract] = useState<{
+    kpId: number;
+    counterpartyId: number;
+  } | null>(null);
+  const [contractError, setContractError] = useState<string | null>(null);
+  const [contractChoiceOpen, setContractChoiceOpen] = useState(false);
+  const [assembleOpen, setAssembleOpen] = useState(false);
 
   const discountMutation = useUpdateDiscountMutation();
   const logisticsMutation = useUpdateLogisticsCostMutation();
   const bindMutation = useBindCounterpartyMutation();
   const createBindMutation = useCreateAndBindCounterpartyMutation();
+  const ensureContract = useEnsureDirectoryContractMutation();
+  const offerForDirectory = query.data;
+  const directoryNeedle = contractChoiceOpen
+    ? offerForDirectory?.customer_inn?.trim() || offerForDirectory?.customer_name?.trim() || ""
+    : "";
+  const directoryQuery = useDirectoryQuery(directoryNeedle);
   const exportInvoiceMutation = useExportInvoiceMutation();
   const correctionMutation = useExportInvoiceCorrectionMutation();
   const paymentMutation = useSetArchivePaymentMutation();
@@ -362,6 +403,16 @@ export const OfferDetailsDrawer = ({ open, kpId, onClose }: Props) => {
   const [warehousePick, setWarehousePick] = useState<null | "create" | "correction">(null);
 
   const offer = query.data;
+  const contractRecorded =
+    offer != null &&
+    recordedContract?.kpId === offer.kp_id &&
+    recordedContract.counterpartyId === offer.counterparty_id;
+  const phaseOffer =
+    offer &&
+    contractRecorded &&
+    offer.invoice_export_block?.trim() === MISSING_SUPPLY_CONTRACT
+      ? { ...offer, invoice_export_block: null }
+      : offer;
   useEffect(() => {
     setBindSelected(null);
     setBindName(offer?.customer_name ?? "");
@@ -370,6 +421,9 @@ export const OfferDetailsDrawer = ({ open, kpId, onClose }: Props) => {
     setBindKpp("");
     setSpecOpen(false);
     setSpecError(null);
+    setContractChoiceOpen(false);
+    setAssembleOpen(false);
+    setContractError(null);
   }, [offer?.kp_id, offer?.counterparty_id]);
   const holdQuery = usePromiseHoldQuery(
     open && offer?.status === "в архиве" ? offer.kp_id : null,
@@ -788,10 +842,57 @@ export const OfferDetailsDrawer = ({ open, kpId, onClose }: Props) => {
               <div>
                 <div style={{ color: "#667085", fontSize: "0.85rem" }}>Клиент</div>
                 <div style={{ fontWeight: 600 }}>{offer.customer_name || "—"}</div>
-                {offer.counterparty_id != null &&
-                  offer.invoice_export_block?.trim() === "Нет действующего договора поставки" && (
-                    <div style={{ color: "#b54708", fontSize: "0.9rem", marginTop: "0.2rem" }}>
-                      в реестре договора нет
+                {phaseOffer?.counterparty_id != null &&
+                  phaseOffer.invoice_export_block?.trim() === MISSING_SUPPLY_CONTRACT && (
+                    <div style={{ marginTop: "0.35rem", display: "grid", gap: "0.5rem" }}>
+                      {!contractChoiceOpen && (
+                        <Button
+                          type="button"
+                          variant="secondary"
+                          onClick={() => {
+                            setContractError(null);
+                            setContractChoiceOpen(true);
+                          }}
+                        >
+                          в реестре договора нет
+                        </Button>
+                      )}
+                      {contractChoiceOpen && (
+                        <DirectoryContractActions
+                          client={directoryChoiceClient(offer, directoryQuery.data?.items)}
+                          pending={ensureContract.isPending}
+                          error={contractError}
+                          onLink={(body) => {
+                            const counterpartyId = offer.counterparty_id;
+                            if (counterpartyId == null) {
+                              return;
+                            }
+                            setContractError(null);
+                            void ensureContract
+                              .mutateAsync({
+                                counterpartyId,
+                                ...(body.number ? { number: body.number } : {}),
+                                ...(body.contract_id != null ? { contractId: body.contract_id } : {}),
+                              })
+                              .then(() =>
+                                setRecordedContract({ kpId: offer.kp_id, counterpartyId }),
+                              )
+                              .catch((error: unknown) => setContractError(getErrorMessage(error)));
+                          }}
+                          onAssemble={() => setAssembleOpen(true)}
+                        />
+                      )}
+                      {assembleOpen && offer.counterparty_id != null && (
+                        <ContractCardDrawer
+                          key={offer.counterparty_id}
+                          draft={{
+                            counterpartyId: offer.counterparty_id,
+                            name: offer.customer_name || "",
+                            inn: offer.customer_inn ?? null,
+                          }}
+                          onCloseDraft={() => setAssembleOpen(false)}
+                        />
+                      )}
                     </div>
                   )}
                 {offer.counterparty_id == null && (
@@ -918,7 +1019,7 @@ export const OfferDetailsDrawer = ({ open, kpId, onClose }: Props) => {
               )}
             </div>
             <OrderPhaseHeader
-              offer={offer}
+              offer={phaseOffer ?? offer}
               simpleProduct={isSimpleProductOffer}
               busy={phaseBusy}
               onSend={() => setWarehousePick("create")}
