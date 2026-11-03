@@ -551,8 +551,8 @@ def test_discount_does_not_apply_to_fbs_lm_boiler(tmp_path) -> None:
     assert totals["total_with_vat"] == 150.0 + 100_000.0  # 30*10*0.5 + delivery
 
 
-def test_ready_fbs_manual_trips_use_shared_plate_tariff(tmp_path) -> None:
-    """Готовый котёл ФБС: принятое число × logistics_cost. Ноль прячет сумму."""
+def test_ready_fbs_ignores_stored_accepted_and_uses_capacity_formula(tmp_path) -> None:
+    """ФБС: рейсы = ceil(кг / 20000). Сохранённое accepted и явный override не подменяют формулу."""
     db_path = _seed_weights(tmp_path, [("ФБС 24.6.6-Т", "fbs", 1000.0)])
     order_data = [
         {
@@ -570,6 +570,7 @@ def test_ready_fbs_manual_trips_use_shared_plate_tariff(tmp_path) -> None:
     assert bare["fbs_lm_trips_notice"] is None
     basis = bare["trip_counts"]["fbs_lm"]["basis_kg"]
     assert basis == pytest.approx(15_000.0)
+    assert FBS_LM_TRUCK_CAPACITY_KG == 20_000.0
 
     zeroed = calculate_total_cost(
         order_data,
@@ -583,9 +584,40 @@ def test_ready_fbs_manual_trips_use_shared_plate_tariff(tmp_path) -> None:
             "fbs_lm": {"accepted": 0, "basis_kg": basis, "formula": 1},
             "notices": [],
         },
+        accepted_trip_overrides={"fbs_lm": 7},
     )
-    assert zeroed["fbs_lm_trips"] == 0
-    assert zeroed["fbs_lm_delivery_total"] == 0.0
+    assert zeroed["fbs_lm_trips"] == 1
+    assert zeroed["fbs_lm_delivery_total"] == 2_000.0
+    assert zeroed["fbs_lm_trips_notice"] is None
+    assert "fbs_lm" in zeroed["trip_counts"]
+
+    heavy = [
+        {
+            "name": "ФБС 24.6.6-Т",
+            "mark": "ФБС 24.6.6-Т",
+            "product_type": "fbs",
+            "qty": 45,
+            "unit_price": 10.0,
+        }
+    ]
+    forced = calculate_total_cost(
+        heavy,
+        discount_percent=0,
+        logistics_cost=2_000.0,
+        db_path=db_path,
+        require_all_priced=False,
+        fbs_lm_delivery_enabled=True,
+        weight_catalog_db_path=db_path,
+        trip_counts={
+            "fbs_lm": {"accepted": 7, "basis_kg": 45_000.0, "formula": 3},
+            "notices": [{"bucket": "fbs_lm", "previous": 7, "next": 3}],
+        },
+    )
+    assert forced["fbs_lm_cargo_kg"] == pytest.approx(45_000.0)
+    assert forced["fbs_lm_trips_formula"] == 3
+    assert forced["fbs_lm_trips"] == 3
+    assert forced["fbs_lm_delivery_total"] == 6_000.0
+    assert forced["fbs_lm_trips_notice"] is None
 
     pending = calculate_total_cost(
         [

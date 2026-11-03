@@ -6,13 +6,6 @@ import { Spinner } from "@/shared/ui/Spinner";
 import { Alert } from "@/shared/ui/Alert";
 import { FieldWrapper, Input } from "@/shared/ui/Field";
 import { formatFrostPair } from "@/features/commercial-offer/lib/concreteSpec";
-import {
-  parseAcceptedTripCount,
-  TripCountField,
-  TripCountNotices,
-  type TripBucket,
-  type TripCountNotice,
-} from "@/features/commercial-offer/components/TripCountField";
 import { archiveApi } from "@/features/commercial-archive/api/archiveApi";
 import {
   CounterpartyAutocomplete,
@@ -38,9 +31,6 @@ import {
   holdCreatedByTitle,
   usePromiseHoldQuery,
 } from "@/features/factory-capacity/api/promiseQuote";
-import {
-  cargoDeliveryTripsCount,
-} from "@/features/commercial-offer/utils/cargoDeliveryPricing";
 import {
   collectLongPileTariffs,
   formatLongPileMeters,
@@ -320,10 +310,6 @@ export const OfferDetailsDrawer = ({ open, kpId, onClose }: Props) => {
   const [discountDraft, setDiscountDraft] = useState("");
   const [targetSumDraft, setTargetSumDraft] = useState("");
   const [logisticsDraft, setLogisticsDraft] = useState("");
-  const [plateTripsDraft, setPlateTripsDraft] = useState("");
-  const [pileTripsDraft, setPileTripsDraft] = useState("");
-  const [fbsTripsDraft, setFbsTripsDraft] = useState("");
-  const [tripCountError, setTripCountError] = useState<string | null>(null);
   const [pileLogisticsDraft, setPileLogisticsDraft] = useState("");
   const [pileOverrideDrafts, setPileOverrideDrafts] = useState<Record<string, string>>({});
   const [longTariffDrafts, setLongTariffDrafts] = useState<Record<string, string>>({});
@@ -511,10 +497,6 @@ export const OfferDetailsDrawer = ({ open, kpId, onClose }: Props) => {
       setTargetSumDraft(savedTargetSum === null ? "" : String(savedTargetSum).replace(".", ","));
       setLogisticsDraft(String(offer.logistics_cost ?? 0).replace(".", ","));
       setPileLogisticsDraft(String(offer.pile_logistics_cost ?? 0).replace(".", ","));
-      setPlateTripsDraft(String(offer.plate_trips ?? 0));
-      setPileTripsDraft(String(offer.pile_trips ?? 0));
-      setFbsTripsDraft(String(offer.fbs_lm_trips ?? 0));
-      setTripCountError(null);
       const nextOverrides: Record<string, string> = {};
       for (const mark of pileQuestionMarks(offer)) {
         const saved = offer.pile_trip_overrides?.[mark];
@@ -541,9 +523,6 @@ export const OfferDetailsDrawer = ({ open, kpId, onClose }: Props) => {
     offer?.finance.discount_percent,
     offer?.logistics_cost,
     offer?.pile_logistics_cost,
-    offer?.plate_trips,
-    offer?.pile_trips,
-    offer?.fbs_lm_trips,
     offer?.delivery_service_total_rub,
     savedTargetSum,
   ]);
@@ -715,41 +694,6 @@ export const OfferDetailsDrawer = ({ open, kpId, onClose }: Props) => {
     setLogisticsDraft(String(parsed).replace(".", ","));
   };
 
-  const submitTripPatch = async (patch: {
-    plateTrips?: number;
-    pileTrips?: number;
-    fbsLmTrips?: number;
-    dismissTripNotices?: TripBucket[];
-  }) => {
-    if (!offer) {
-      return;
-    }
-    setTripCountError(null);
-    await logisticsMutation.mutateAsync({
-      kpId: offer.kp_id,
-      logisticsCost: offer.logistics_cost ?? 0,
-      pileLogisticsCost: hasPileItems ? (offer.pile_logistics_cost ?? 0) : undefined,
-      ...patch,
-    });
-  };
-
-  const applyDrawerTripCount = async (bucket: TripBucket, raw: string) => {
-    const parsed = parseAcceptedTripCount(raw);
-    if (parsed === null) {
-      setTripCountError("Число рейсов должно быть целым числом не меньше 0.");
-      return;
-    }
-    if (bucket === "plate") {
-      await submitTripPatch({ plateTrips: parsed });
-    } else if (bucket === "pile") {
-      await submitTripPatch({ pileTrips: parsed });
-    } else {
-      await submitTripPatch({ fbsLmTrips: parsed });
-    }
-  };
-
-  const clientTrips = offer ? cargoDeliveryTripsCount(Math.max(0, offer.total_cargo_weight_kg ?? 0)) : 0;
-  const tripCountHint = clientTrips > 0 ? ` (${tripsRussianLabel(clientTrips)})` : "";
   const hasPileItems = (offer?.piles?.length ?? 0) > 0 || (offer?.bridge_piles?.length ?? 0) > 0;
   const hasPlateItems = (offer?.plates?.length ?? 0) > 0;
   const hasFbsLmItems =
@@ -763,67 +707,9 @@ export const OfferDetailsDrawer = ({ open, kpId, onClose }: Props) => {
   const canCreate =
     !bindSelected && bindName.trim().length > 0 && bindCode1c.trim().length > 0;
   const bindPending = bindMutation.isPending || createBindMutation.isPending;
-  const showPileTripField = hasPileItems && offer?.pile_delivery_ready !== false;
-  const drawerNotices: Array<{ bucket: TripBucket; notice: TripCountNotice }> = [];
-  if (offer?.plate_trips_notice && hasPlateItems) {
-    drawerNotices.push({ bucket: "plate", notice: offer.plate_trips_notice });
-  }
-  if (offer?.pile_trips_notice && showPileTripField) {
-    drawerNotices.push({ bucket: "pile", notice: offer.pile_trips_notice });
-  }
-  if (offer?.fbs_lm_trips_notice && showFbsLmTrips) {
-    drawerNotices.push({ bucket: "fbs_lm", notice: offer.fbs_lm_trips_notice });
-  }
-  const tripEditors = (
-    <div style={{ display: "grid", gap: "0.65rem" }}>
-      <TripCountNotices
-        notices={drawerNotices}
-        disabled={financePending}
-        onDismiss={(bucket) => {
-          void submitTripPatch({ dismissTripNotices: [bucket] });
-        }}
-      />
-      {hasPlateItems ? (
-        <TripCountField
-          bucket="plate"
-          value={plateTripsDraft}
-          formula={offer?.plate_trips_formula ?? null}
-          error={tripCountError}
-          disabled={financePending}
-          onChange={setPlateTripsDraft}
-          onOk={() => {
-            void applyDrawerTripCount("plate", plateTripsDraft);
-          }}
-        />
-      ) : null}
-      {showPileTripField ? (
-        <TripCountField
-          bucket="pile"
-          value={pileTripsDraft}
-          formula={offer?.pile_trips_formula ?? null}
-          error={tripCountError}
-          disabled={financePending}
-          onChange={setPileTripsDraft}
-          onOk={() => {
-            void applyDrawerTripCount("pile", pileTripsDraft);
-          }}
-        />
-      ) : null}
-      {showFbsLmTrips ? (
-        <TripCountField
-          bucket="fbs_lm"
-          value={fbsTripsDraft}
-          formula={offer?.fbs_lm_trips_formula ?? null}
-          error={tripCountError}
-          disabled={financePending}
-          onChange={setFbsTripsDraft}
-          onOk={() => {
-            void applyDrawerTripCount("fbs_lm", fbsTripsDraft);
-          }}
-        />
-      ) : null}
-    </div>
-  );
+  const summedTrips =
+    (offer?.plate_trips ?? 0) + (offer?.pile_trips ?? 0) + (offer?.fbs_lm_trips ?? 0);
+  const tripCountHint = summedTrips > 0 ? ` (${tripsRussianLabel(summedTrips)})` : "";
 
   return (
     <Modal
@@ -1193,7 +1079,6 @@ export const OfferDetailsDrawer = ({ open, kpId, onClose }: Props) => {
                   {fbsLmPendingMarks.length > 0 && (
                     <FbsLmPendingMarks marks={fbsLmPendingMarks} />
                   )}
-                  {tripEditors}
                   <div
                     style={{
                       display: "flex",
@@ -1248,13 +1133,6 @@ export const OfferDetailsDrawer = ({ open, kpId, onClose }: Props) => {
                   <FinanceCard label="НДС (22%)" value={formatMoney(offer.finance.vat_amount)} />
                 </div>
 
-                <TripCountNotices
-                  notices={drawerNotices}
-                  disabled={financePending}
-                  onDismiss={(bucket) => {
-                    void submitTripPatch({ dismissTripNotices: [bucket] });
-                  }}
-                />
                 <div style={{ border: "1px solid #e4e7ec", borderRadius: 12, padding: "0.9rem", background: "#f8fafc" }}>
                   <FieldWrapper
                     label={hasPlateItems && hasPileItems ? "Рейс плит" : "Стоимость рейса"}
@@ -1295,45 +1173,6 @@ export const OfferDetailsDrawer = ({ open, kpId, onClose }: Props) => {
                   </Button>
                 </div>
               </FieldWrapper>
-              {hasPlateItems ? (
-                <TripCountField
-                  bucket="plate"
-                  value={plateTripsDraft}
-                  formula={offer.plate_trips_formula ?? null}
-                  error={tripCountError}
-                  disabled={financePending}
-                  onChange={setPlateTripsDraft}
-                  onOk={() => {
-                    void applyDrawerTripCount("plate", plateTripsDraft);
-                  }}
-                />
-              ) : null}
-              {showFbsLmTrips ? (
-                <TripCountField
-                  bucket="fbs_lm"
-                  value={fbsTripsDraft}
-                  formula={offer.fbs_lm_trips_formula ?? null}
-                  error={tripCountError}
-                  disabled={financePending}
-                  onChange={setFbsTripsDraft}
-                  onOk={() => {
-                    void applyDrawerTripCount("fbs_lm", fbsTripsDraft);
-                  }}
-                />
-              ) : null}
-              {showPileTripField && !hasPlateItems ? (
-                <TripCountField
-                  bucket="pile"
-                  value={pileTripsDraft}
-                  formula={offer.pile_trips_formula ?? null}
-                  error={tripCountError}
-                  disabled={financePending}
-                  onChange={setPileTripsDraft}
-                  onOk={() => {
-                    void applyDrawerTripCount("pile", pileTripsDraft);
-                  }}
-                />
-              ) : null}
             </div>
             {((offer.piles?.length ?? 0) > 0 || (offer.bridge_piles?.length ?? 0) > 0) &&
                   (offer.plates?.length ?? 0) > 0 && (
@@ -1355,19 +1194,6 @@ export const OfferDetailsDrawer = ({ open, kpId, onClose }: Props) => {
                         }}
                       />
                     </FieldWrapper>
-                    {showPileTripField ? (
-                      <TripCountField
-                        bucket="pile"
-                        value={pileTripsDraft}
-                        formula={offer.pile_trips_formula ?? null}
-                        error={tripCountError}
-                        disabled={financePending}
-                        onChange={setPileTripsDraft}
-                        onOk={() => {
-                          void applyDrawerTripCount("pile", pileTripsDraft);
-                        }}
-                      />
-                    ) : null}
                   </div>
                 )}
                 {offer.pile_delivery_ready !== false &&

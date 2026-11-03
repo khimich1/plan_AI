@@ -533,6 +533,7 @@ class ArchiveService:
             long_pile_delivery=raw.get("long_pile_delivery_json"),
             trip_counts=raw.get("trip_counts_json"),
             kp_id=int(kp_id) if kp_id is not None else None,
+            reset_plate_on_mass_change=False,
         )
 
     def _pile_catalog_lookup(self):
@@ -1089,6 +1090,7 @@ class ArchiveService:
                 long_pile_delivery_enabled=long_pile_delivery_enabled,
                 long_pile_delivery=long_pile_delivery,
                 trip_counts=raw.get("trip_counts_json"),
+                reset_plate_on_mass_change=False,
             )
             filename = f"КП_{kp_id}.pdf"
         elif kind in {"xlsx", "xlsx_delivery_in_unit"}:
@@ -1117,6 +1119,7 @@ class ArchiveService:
                 long_pile_delivery_enabled=long_pile_delivery_enabled,
                 long_pile_delivery=long_pile_delivery,
                 trip_counts=raw.get("trip_counts_json"),
+                reset_plate_on_mass_change=False,
             )
             filename = (
                 f"КП_{kp_id}_с_доставкой_в_цене.xlsx"
@@ -1357,12 +1360,9 @@ class ArchiveService:
             long_pile_delivery=raw.get("long_pile_delivery_json"),
             trip_counts=raw.get("trip_counts_json"),
             kp_id=kp_id,
+            reset_plate_on_mass_change=False,
         )
-        from core.trip_counts import dumps_trip_counts
-
-        fresh_trip_counts = dumps_trip_counts(totals.get("trip_counts"))
-        if kp_id and fresh_trip_counts != dumps_trip_counts(raw.get("trip_counts_json")):
-            self.repository.save_trip_counts_json(kp_id, fresh_trip_counts)
+        # Просмотр карточки не пишет trip_counts_json: сохранённые рейсы плит остаются.
         # Delivery / cargo for archive details: plates 18600 + piles hybrid + ФБС/ЛС/ЛМ.
         total_cargo_weight_kg = float(
             total_order_cargo_weight_kg(order_data, product_types={"plates"})

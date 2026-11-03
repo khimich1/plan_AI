@@ -184,8 +184,6 @@ export const useUpdateLogisticsCostMutation = () => {
       pileTripOverrides,
       longPileDelivery,
       plateTrips,
-      pileTrips,
-      fbsLmTrips,
       dismissTripNotices,
     }: {
       kpId: number;
@@ -194,8 +192,6 @@ export const useUpdateLogisticsCostMutation = () => {
       pileTripOverrides?: Record<string, number>;
       longPileDelivery?: Record<string, { trip_cost: number }>;
       plateTrips?: number;
-      pileTrips?: number;
-      fbsLmTrips?: number;
       dismissTripNotices?: Array<"plate" | "pile" | "fbs_lm">;
     }) =>
       archiveApi.updateLogisticsCost(kpId, {
@@ -204,8 +200,6 @@ export const useUpdateLogisticsCostMutation = () => {
         pileTripOverrides,
         longPileDelivery,
         plateTrips,
-        pileTrips,
-        fbsLmTrips,
         dismissTripNotices,
       }),
     onSuccess: (offer) => {

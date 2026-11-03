@@ -509,10 +509,10 @@ def test_resolve_same_mass_keeps_manual_and_epsilon_does_not_reset() -> None:
     assert tiny.stored["plate"]["basis_kg"] == 215_220.0
 
 
-def test_resolve_formula_growth_replaces_that_bucket_notice_only() -> None:
+def test_resolve_formula_growth_replaces_plate_notice_only() -> None:
     stored = {
         "plate": {"accepted": 12, "basis_kg": 215_220.0, "formula": 12},
-        "fbs_lm": {"accepted": 1, "basis_kg": 15_000.0, "formula": 1},
+        "fbs_lm": {"accepted": 9, "basis_kg": 15_000.0, "formula": 1},
         "notices": [{"bucket": "pile", "previous": 1, "next": 2}],
     }
     resolved = resolve_trip_counts(
@@ -520,16 +520,68 @@ def test_resolve_formula_growth_replaces_that_bucket_notice_only() -> None:
         plate=_bucket(True, True, 215_220.0 + 18_600.0, 13),
         pile=_idle_bucket(),
         fbs_lm=_bucket(True, True, 15_000.0, 1),
+        overrides={"fbs_lm": 4},
     )
     assert resolved.accepted["plate"] == 13
     assert resolved.notice_for("plate") == {"previous": 12, "next": 13}
     assert resolved.accepted["fbs_lm"] == 1
     assert resolved.notice_for("fbs_lm") is None
+    assert resolved.stored["fbs_lm"]["accepted"] == 1
     # Чужой котёл не в заказе — его старое напоминание не трогаем.
     assert any(row["bucket"] == "pile" for row in resolved.stored["notices"])
 
 
-def test_resolve_two_buckets_keep_two_notices_and_dismiss_does_not_change_accepted() -> None:
+def test_resolve_pile_accepted_is_ignored_and_key_stays() -> None:
+    stored = {
+        "pile": {"accepted": 125, "basis_kg": 40_000.0, "formula": 2},
+        "notices": [{"bucket": "pile", "previous": 125, "next": 2}],
+    }
+    resolved = resolve_trip_counts(
+        stored,
+        plate=_idle_bucket(),
+        pile=_bucket(True, True, 40_000.0, 2),
+        fbs_lm=_idle_bucket(),
+        overrides={"pile": 9},
+    )
+    assert resolved.accepted["pile"] == 2
+    assert resolved.formula["pile"] == 2
+    assert resolved.notice_for("pile") is None
+    assert "pile" in resolved.stored
+    assert resolved.stored["pile"]["accepted"] == 2
+    assert resolved.stored["notices"] == []
+
+
+def test_resolve_archive_flag_keeps_plate_57_when_formula_would_be_49() -> None:
+    stored = {
+        "plate": {"accepted": 57, "basis_kg": 1_060_200.0, "formula": 57},
+        "notices": [],
+    }
+    kept = resolve_trip_counts(
+        stored,
+        plate=_bucket(True, True, 899_947.5, 49),
+        pile=_idle_bucket(),
+        fbs_lm=_idle_bucket(),
+        reset_plate_on_mass_change=False,
+    )
+    assert kept.accepted["plate"] == 57
+    assert kept.formula["plate"] == 49
+    assert kept.notice_for("plate") is None
+    assert kept.stored["plate"]["accepted"] == 57
+    assert kept.stored["plate"]["basis_kg"] == 1_060_200.0
+
+    reset = resolve_trip_counts(
+        stored,
+        plate=_bucket(True, True, 899_947.5, 49),
+        pile=_idle_bucket(),
+        fbs_lm=_idle_bucket(),
+    )
+    assert reset.accepted["plate"] == 49
+    assert reset.notice_for("plate") == {"previous": 57, "next": 49}
+    assert reset.stored["plate"]["accepted"] == 49
+    assert reset.stored["plate"]["basis_kg"] == 899_947.5
+
+
+def test_resolve_plate_mass_reset_does_not_notice_fbs() -> None:
     stored = {
         "plate": {"accepted": 10, "basis_kg": 100.0, "formula": 12},
         "fbs_lm": {"accepted": 2, "basis_kg": 100.0, "formula": 1},
@@ -542,11 +594,13 @@ def test_resolve_two_buckets_keep_two_notices_and_dismiss_does_not_change_accept
         fbs_lm=_bucket(True, True, 15_000.0, 1),
     )
     assert resolved.notice_for("plate") == {"previous": 10, "next": 12}
-    assert resolved.notice_for("fbs_lm") == {"previous": 2, "next": 1}
+    assert resolved.accepted["fbs_lm"] == 1
+    assert resolved.notice_for("fbs_lm") is None
+    assert resolved.stored["fbs_lm"]["accepted"] == 1
     dismissed = dismiss_trip_notices(resolved.stored, ["plate"])
     assert dismissed["plate"]["accepted"] == 12
     assert dismissed["fbs_lm"]["accepted"] == 1
-    assert [row["bucket"] for row in dismissed["notices"]] == ["fbs_lm"]
+    assert dismissed["notices"] == []
 
 
 def test_resolve_not_ready_drops_key_so_next_ready_is_first_fill() -> None:
@@ -694,14 +748,15 @@ def test_calculate_total_cost_pending_pile_ignores_accepted_count(tmp_path) -> N
     assert totals["trip_counts"]["notices"] == []
 
 
-def test_calculate_total_cost_short_pile_manual_trips_use_pile_tariff(tmp_path) -> None:
+def test_calculate_total_cost_short_pile_ignores_stored_accepted(tmp_path) -> None:
+    """Сваи: trip_counts.pile.accepted не подменяет формулу и не ставит плашку."""
     db_path = _seed_mini_pile_catalog(tmp_path)
     order_data = [
         {
             "name": "С60.30",
             "mark": "С60.30",
             "product_type": "piles",
-            "qty": 14,
+            "qty": 28,
             "unit_price": 50.0,
         }
     ]
@@ -716,7 +771,7 @@ def test_calculate_total_cost_short_pile_manual_trips_use_pile_tariff(tmp_path) 
     )
     basis = probed["trip_counts"]["pile"]["basis_kg"]
     formula = probed["pile_trips_formula"]
-    assert formula == 1
+    assert formula == 2
     manual = calculate_total_cost_core(
         order_data,
         0,
@@ -726,14 +781,16 @@ def test_calculate_total_cost_short_pile_manual_trips_use_pile_tariff(tmp_path) 
         pile_logistics_cost=1_000.0,
         pile_catalog_db_path=db_path,
         trip_counts={
-            "pile": {"accepted": 3, "basis_kg": basis, "formula": formula},
+            "pile": {"accepted": 125, "basis_kg": basis, "formula": formula},
             "notices": [],
         },
+        accepted_trip_overrides={"pile": 9},
     )
-    assert manual["pile_trips"] == 3
-    assert manual["pile_delivery_total"] == 3_000.0
+    assert manual["pile_trips"] == 2
+    assert manual["pile_delivery_total"] == 2_000.0
     assert manual["pile_trips_notice"] is None
-    assert manual["total_with_vat"] == 14 * 50.0 + 3_000.0
+    assert manual["total_with_vat"] == 28 * 50.0 + 2_000.0
+    assert manual["trip_counts"]["pile"]["accepted"] == 2
 
     shifted = calculate_total_cost_core(
         order_data,
@@ -744,10 +801,86 @@ def test_calculate_total_cost_short_pile_manual_trips_use_pile_tariff(tmp_path) 
         pile_logistics_cost=2_000.0,
         pile_catalog_db_path=db_path,
         trip_counts={
-            "pile": {"accepted": 3, "basis_kg": basis + 1.0, "formula": formula},
+            "pile": {"accepted": 125, "basis_kg": basis + 1.0, "formula": formula},
             "notices": [],
         },
     )
     assert shifted["pile_trips"] == formula
-    assert shifted["pile_trips_notice"] == {"previous": 3, "next": formula}
+    assert shifted["pile_trips_notice"] is None
     assert shifted["pile_delivery_total"] == round(2_000.0 * formula, 2)
+    assert "pile" in shifted["trip_counts"]
+
+
+def _plate_order_formula_49() -> list[dict]:
+    """12 м × 1,2 м × 219 шт → ceil(кг / 18600) = 49."""
+    return [
+        {
+            "name": "ПБ",
+            "product_type": "plates",
+            "qty": 219,
+            "unit_price": 100.0,
+            "length_m": 12.0,
+            "width_m": 1.2,
+        }
+    ]
+
+
+def test_calculate_total_cost_same_mass_keeps_plate_57(tmp_path) -> None:
+    db_path = fx.make_iso_db(tmp_path)
+    order = _plate_order_formula_49()
+    kg = total_order_cargo_weight_kg(order, product_types={"plates"})
+    formula = cargo_delivery_trips_count(kg)
+    assert formula == 49
+    kept = calculate_total_cost_core(
+        order,
+        0,
+        logistics_cost=2_000.0,
+        db_path=db_path,
+        require_all_priced=False,
+        trip_counts={
+            "plate": {"accepted": 57, "basis_kg": kg, "formula": formula},
+            "notices": [],
+        },
+    )
+    assert kept["plate_trips"] == 57
+    assert kept["plate_trips_formula"] == 49
+    assert kept["plate_trips_notice"] is None
+    assert kept["plate_delivery_total"] == 114_000.0
+
+
+def test_calculate_total_cost_archive_flag_keeps_plate_57_when_mass_changes(tmp_path) -> None:
+    db_path = fx.make_iso_db(tmp_path)
+    order = _plate_order_formula_49()
+    kg = total_order_cargo_weight_kg(order, product_types={"plates"})
+    assert cargo_delivery_trips_count(kg) == 49
+    stored = {
+        "plate": {"accepted": 57, "basis_kg": 1_060_200.0, "formula": 57},
+        "pile": {"accepted": 125, "basis_kg": 1.0, "formula": 2},
+        "notices": [],
+    }
+    kept = calculate_total_cost_core(
+        order,
+        0,
+        logistics_cost=1_000.0,
+        db_path=db_path,
+        require_all_priced=False,
+        trip_counts=stored,
+        reset_plate_on_mass_change=False,
+    )
+    assert kept["plate_trips"] == 57
+    assert kept["plate_trips_formula"] == 49
+    assert kept["plate_trips_notice"] is None
+    assert kept["trip_counts"]["plate"]["accepted"] == 57
+    assert kept["trip_counts"]["pile"]["accepted"] == 125
+
+    reset = calculate_total_cost_core(
+        order,
+        0,
+        logistics_cost=1_000.0,
+        db_path=db_path,
+        require_all_priced=False,
+        trip_counts=stored,
+    )
+    assert reset["plate_trips"] == 49
+    assert reset["plate_trips_notice"] == {"previous": 57, "next": 49}
+    assert reset["plate_delivery_total"] == 49_000.0

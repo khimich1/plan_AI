@@ -1795,98 +1795,76 @@ describe("OfferDetailsDrawer manual trip count", () => {
     vi.clearAllMocks();
   });
 
-  it("applies a plate trip count through the logistics patch", async () => {
-    mockLogisticsMutateAsync.mockResolvedValue(undefined);
-    mockUseArchiveOfferQuery.mockReturnValue({
-      data: makeOffer("в архиве", null, {
-        logistics_cost: 2000,
-        plate_trips: 12,
-        plate_trips_formula: 12,
-        plates: [
-          {
-            position_number: 1,
-            plate_name: "ПБ",
-            length_m: 6,
-            width_m: 1.2,
-            load_class: 800,
-            qty: 1,
-            unit_price: 100,
-            discounted_price: 100,
-            unit_weight: 1000,
-            total_weight: 1000,
-            status: null,
-          },
-        ],
-      }),
-      isPending: false,
-      isError: false,
-      error: null,
-    });
+  it.each(["в архиве", "в работе"] as const)(
+    "hides trip editors for %s and shows delivery trips from the sum",
+    (status) => {
+      mockUseArchiveOfferQuery.mockReturnValue({
+        data: makeOffer(status, null, {
+          logistics_cost: 2000,
+          total_cargo_weight_kg: 1200,
+          delivery_service_total_rub: 120000,
+          plate_trips: 57,
+          plate_trips_formula: 49,
+          plate_trips_notice: { previous: 49, next: 57 },
+          pile_delivery_ready: true,
+          pile_trips: 2,
+          pile_trips_notice: { previous: 1, next: 2 },
+          fbs_lm_delivery_enabled: true,
+          fbs_lm_delivery_ready: true,
+          fbs_lm_trips: 1,
+          fbs_lm_trips_notice: { previous: 2, next: 1 },
+          plates: [
+            {
+              position_number: 1,
+              plate_name: "ПБ",
+              length_m: 6,
+              width_m: 1.2,
+              load_class: 800,
+              qty: 1,
+              unit_price: 100,
+              discounted_price: 100,
+              unit_weight: 1000,
+              total_weight: 1000,
+              status: null,
+            },
+          ],
+          piles: [
+            {
+              position_number: 2,
+              mark: "С80.30-8",
+              concrete_grade: "B25",
+              qty: 4,
+              unit_price: 10,
+              discounted_price: 10,
+            },
+          ],
+          fbs: [
+            {
+              position_number: 3,
+              mark: "ФБС 24.4.6-Т",
+              concrete_grade: "",
+              qty: 4,
+              unit_price: 10,
+              discounted_price: 10,
+            },
+          ],
+        }),
+        isPending: false,
+        isError: false,
+        error: null,
+      });
 
-    render(<OfferDetailsDrawer open kpId={42} onClose={vi.fn()} />);
-    const input = screen.getByRole("textbox", { name: "Кол. рейсов плит" });
-    expect(input).toHaveValue("12");
-    fireEvent.change(input, { target: { value: "10" } });
-    expect(screen.getByText("по весу: 12")).toBeInTheDocument();
-    fireEvent.click(screen.getByRole("button", { name: "OK Кол. рейсов плит" }));
-    expect(mockLogisticsMutateAsync).toHaveBeenCalledWith(
-      expect.objectContaining({ kpId: 42, logisticsCost: 2000, plateTrips: 10 }),
-    );
-  });
+      render(<OfferDetailsDrawer open kpId={42} onClose={vi.fn()} />);
 
-  it("shows two notices and does not clear the other when one is dismissed", () => {
-    mockLogisticsMutateAsync.mockResolvedValue(undefined);
-    mockUseArchiveOfferQuery.mockReturnValue({
-      data: makeOffer("в архиве", null, {
-        logistics_cost: 2000,
-        plate_trips: 12,
-        plate_trips_formula: 12,
-        plate_trips_notice: { previous: 10, next: 12 },
-        fbs_lm_delivery_enabled: true,
-        fbs_lm_delivery_ready: true,
-        fbs_lm_trips: 1,
-        fbs_lm_trips_formula: 1,
-        fbs_lm_trips_notice: { previous: 2, next: 1 },
-        plates: [
-          {
-            position_number: 1,
-            plate_name: "ПБ",
-            length_m: 6,
-            width_m: 1.2,
-            load_class: 800,
-            qty: 1,
-            unit_price: 100,
-            discounted_price: 100,
-            unit_weight: 1000,
-            total_weight: 1000,
-            status: null,
-          },
-        ],
-        fbs: [
-          {
-            position_number: 2,
-            mark: "ФБС 24.4.6-Т",
-            concrete_grade: "",
-            qty: 4,
-            unit_price: 10,
-            discounted_price: 10,
-          },
-        ],
-      }),
-      isPending: false,
-      isError: false,
-      error: null,
-    });
-
-    render(<OfferDetailsDrawer open kpId={42} onClose={vi.fn()} />);
-    expect(screen.getByText("Рейсы плит пересчитаны: было 10, стало 12")).toBeInTheDocument();
-    expect(screen.getByText("Рейсы ФБС/ЛС/ЛМ пересчитаны: было 2, стало 1")).toBeInTheDocument();
-    fireEvent.click(screen.getByRole("button", { name: "Закрыть напоминание о рейсах плит" }));
-    expect(mockLogisticsMutateAsync).toHaveBeenCalledWith(
-      expect.objectContaining({ dismissTripNotices: ["plate"] }),
-    );
-    expect(screen.getByText("Рейсы ФБС/ЛС/ЛМ пересчитаны: было 2, стало 1")).toBeInTheDocument();
-  });
+      expect(screen.getByText(/Услуга по доставке грузов/)).toBeInTheDocument();
+      expect(screen.getByText(/\(60 рейсов\)/)).toBeInTheDocument();
+      expect(screen.queryByText(/\(1 рейс\)/)).not.toBeInTheDocument();
+      expect(screen.queryByRole("textbox", { name: /Кол\. рейсов/ })).not.toBeInTheDocument();
+      expect(screen.queryByText(/пересчитаны/)).not.toBeInTheDocument();
+      expect(screen.getByText("Рейсов свай")).toBeInTheDocument();
+      expect(screen.getByText("Рейсов ФБС/ЛС/ЛМ")).toBeInTheDocument();
+    },
+  );
 
   it("hides the trip field while FBS weight is missing", () => {
     mockUseArchiveOfferQuery.mockReturnValue({

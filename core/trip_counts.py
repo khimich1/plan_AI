@@ -1,7 +1,8 @@
 """Принятое число рейсов трёх простых котлов КП.
 
 Формулы рейсов сюда не входят: вызывающий передаёт уже посчитанные
-массу и целое формулы. Здесь только подмена перед умножением на тариф.
+массу и целое формулы. Ручное число остаётся только у плит.
+Сваи и ФБС всегда берут формулу; ключи JSON не вычищаем.
 """
 
 from __future__ import annotations
@@ -11,6 +12,7 @@ from dataclasses import dataclass
 from typing import Any, Mapping
 
 TRIP_BUCKETS = ("plate", "pile", "fbs_lm")
+FORMULA_TRIP_BUCKETS = frozenset({"pile", "fbs_lm"})
 MASS_RESET_EPSILON_KG = 0.01
 
 
@@ -130,6 +132,19 @@ def _replace_notice(
     return kept
 
 
+def _mass_changed(cargo_kg: float, basis_kg: float) -> bool:
+    return abs(float(cargo_kg) - float(basis_kg)) > MASS_RESET_EPSILON_KG + 1e-6
+
+
+def _formula_record(spec: TripBucketInput) -> dict[str, Any]:
+    chosen = int(spec.formula)
+    return {
+        "accepted": chosen,
+        "basis_kg": float(spec.cargo_kg),
+        "formula": chosen,
+    }
+
+
 def resolve_trip_counts(
     stored: Any,
     *,
@@ -137,6 +152,7 @@ def resolve_trip_counts(
     pile: TripBucketInput,
     fbs_lm: TripBucketInput,
     overrides: Mapping[str, int] | None = None,
+    reset_plate_on_mass_change: bool = True,
 ) -> ResolvedTrips:
     parsed = coerce_trip_counts(stored)
     records = {bucket: parsed[bucket] for bucket in TRIP_BUCKETS if bucket in parsed}
@@ -156,6 +172,12 @@ def resolve_trip_counts(
             accepted[bucket] = 0
             continue
 
+        if bucket in FORMULA_TRIP_BUCKETS:
+            records[bucket] = _formula_record(spec)
+            notices = [row for row in notices if row["bucket"] != bucket]
+            accepted[bucket] = int(spec.formula)
+            continue
+
         explicit = _override_value(overrides, bucket)
         record = records.get(bucket)
         if record is None:
@@ -169,17 +191,21 @@ def resolve_trip_counts(
             continue
 
         basis = float(record["basis_kg"])
-        if abs(float(spec.cargo_kg) - basis) > MASS_RESET_EPSILON_KG + 1e-6:
-            previous = int(record["accepted"])
-            chosen = int(spec.formula)
-            records[bucket] = {
-                "accepted": chosen,
-                "basis_kg": float(spec.cargo_kg),
-                "formula": int(spec.formula),
-            }
-            if previous != chosen:
-                notices = _replace_notice(notices, bucket, previous, chosen)
-            accepted[bucket] = chosen
+        if _mass_changed(spec.cargo_kg, basis):
+            if reset_plate_on_mass_change:
+                previous = int(record["accepted"])
+                chosen = int(spec.formula)
+                records[bucket] = {
+                    "accepted": chosen,
+                    "basis_kg": float(spec.cargo_kg),
+                    "formula": int(spec.formula),
+                }
+                if previous != chosen:
+                    notices = _replace_notice(notices, bucket, previous, chosen)
+                accepted[bucket] = chosen
+            else:
+                notices = [row for row in notices if row["bucket"] != bucket]
+                accepted[bucket] = int(record["accepted"])
             continue
 
         chosen = int(record["accepted"])
@@ -197,6 +223,8 @@ def resolve_trip_counts(
         bucket = row["bucket"]
         spec = inputs.get(bucket)
         if spec is None or not spec.present or not spec.ready:
+            continue
+        if bucket == "plate" and not reset_plate_on_mass_change:
             continue
         notice_map[bucket] = {"previous": int(row["previous"]), "next": int(row["next"])}
 

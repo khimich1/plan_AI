@@ -688,6 +688,7 @@ describe("CalculationResultStep MNA-501 — trip cost gate", () => {
     expect(screen.getByText("Стоимость рейса")).toBeInTheDocument();
     expect(screen.getByText("Рейсов ФБС/ЛС/ЛМ")).toBeInTheDocument();
     expect(screen.getByText("2")).toBeInTheDocument();
+    expect(screen.queryByRole("textbox", { name: "Кол. рейсов ФБС/ЛС/ЛМ" })).not.toBeInTheDocument();
     expect(screen.queryByText("Рейс плит")).not.toBeInTheDocument();
     expect(screen.queryByText("Рейс свай")).not.toBeInTheDocument();
 
@@ -1257,18 +1258,22 @@ describe("CalculationResultStep manual trip count", () => {
     expect(screen.getByText("Число рейсов должно быть целым числом не меньше 0.")).toBeInTheDocument();
   });
 
-  it("shows two notices and dismisses only the clicked boiler", () => {
+  it("shows the plate notice only and no trip field for piles or FBS", () => {
     const onTripCountSubmit = vi.fn(async () => undefined);
     renderResultStep(
       makeDraft({
         order_data: [
           { line_id: "p", product_type: "plates", name: "ПБ", qty: 1, unit_price: 10 },
+          { line_id: "s", product_type: "piles", name: "С60.30", mark: "С60.30", qty: 2, unit_price: 10 },
           { line_id: "f", product_type: "fbs", name: "ФБС", qty: 1, unit_price: 10 },
         ],
         totals: {
           plate_trips: 12,
           plate_trips_formula: 12,
           plate_trips_notice: { previous: 10, next: 12 },
+          pile_delivery_ready: true,
+          pile_trips: 2,
+          pile_trips_notice: { previous: 1, next: 2 },
           fbs_lm_delivery_ready: true,
           fbs_lm_trips: 1,
           fbs_lm_trips_formula: 1,
@@ -1278,11 +1283,16 @@ describe("CalculationResultStep manual trip count", () => {
       { onTripCountSubmit },
     );
 
+    expect(screen.getByRole("textbox", { name: "Кол. рейсов плит" })).toBeInTheDocument();
     expect(screen.getByText("Рейсы плит пересчитаны: было 10, стало 12")).toBeInTheDocument();
-    expect(screen.getByText("Рейсы ФБС/ЛС/ЛМ пересчитаны: было 2, стало 1")).toBeInTheDocument();
+    expect(screen.getByText("Рейсов свай")).toBeInTheDocument();
+    expect(screen.getByText("Рейсов ФБС/ЛС/ЛМ")).toBeInTheDocument();
+    expect(screen.queryByRole("textbox", { name: "Кол. рейсов свай" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("textbox", { name: "Кол. рейсов ФБС/ЛС/ЛМ" })).not.toBeInTheDocument();
+    expect(screen.queryByText(/Рейсы свай пересчитаны/)).not.toBeInTheDocument();
+    expect(screen.queryByText(/Рейсы ФБС\/ЛС\/ЛМ пересчитаны/)).not.toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "Закрыть напоминание о рейсах плит" }));
     expect(onTripCountSubmit).toHaveBeenCalledWith({ dismissTripNotices: ["plate"] });
-    expect(screen.getByText("Рейсы ФБС/ЛС/ЛМ пересчитаны: было 2, стало 1")).toBeInTheDocument();
   });
 
   it("keeps the machines question and hides the trip field while piles are pending", () => {

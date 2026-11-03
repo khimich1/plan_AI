@@ -234,6 +234,10 @@ export const useCommercialOfferWizard = () => {
       pileLogisticsCost,
       pileTripOverrides,
       longPileDelivery,
+      plateTrips,
+      pileTrips,
+      fbsLmTrips,
+      dismissTripNotices,
     }: {
       draftId: string;
       managerId?: number | null;
@@ -248,6 +252,10 @@ export const useCommercialOfferWizard = () => {
       pileLogisticsCost?: number;
       pileTripOverrides?: Record<string, number>;
       longPileDelivery?: Record<string, { trip_cost: number }>;
+      plateTrips?: number;
+      pileTrips?: number;
+      fbsLmTrips?: number;
+      dismissTripNotices?: Array<"plate" | "pile" | "fbs_lm">;
     }) =>
       commercialOfferApi.updateDraftMeta(draftId, {
         managerId,
@@ -262,6 +270,10 @@ export const useCommercialOfferWizard = () => {
         pileLogisticsCost,
         pileTripOverrides,
         longPileDelivery,
+        plateTrips,
+        pileTrips,
+        fbsLmTrips,
+        dismissTripNotices,
       }),
     onSuccess: (draft, variables) => {
       setDraftCache(variables.draftId, draft);

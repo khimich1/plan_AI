@@ -1641,6 +1641,91 @@ def test_download_mixed_xlsx_regenerates_unified_layout(
     assert any("доставк" in n.lower() for n in names), names
 
 
+def test_archive_get_keeps_stored_plate_trips_and_does_not_write(
+    mixed_archive_client: tuple[TestClient, str, Path],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Открытие карточки не сбрасывает плиты 57→49 и не пишет trip_counts_json."""
+    import json
+    import sqlite3
+
+    from core.cargo_delivery_pricing import (
+        cargo_delivery_trips_count,
+        total_order_cargo_weight_kg,
+    )
+    from core.kp.offers_write import save_trip_counts_json
+    from core.kp_persistence_service import KpPersistenceService
+    from core.trip_counts import dumps_trip_counts
+
+    client, db_path, _outputs = mixed_archive_client
+    order = [
+        {
+            "name": "ПБ",
+            "product_type": "plates",
+            "qty": 219,
+            "unit_price": 100.0,
+            "length_m": 12.0,
+            "width_m": 1.2,
+        }
+    ]
+    kg = total_order_cargo_weight_kg(order, product_types={"plates"})
+    assert cargo_delivery_trips_count(kg) == 49
+    kp_id = KpPersistenceService.save_kp_to_db(
+        "12.08.2026",
+        order,
+        customer_name="Plate trips",
+        status="в архиве",
+        logistics_cost=1000.0,
+        db_path=db_path,
+    )
+    stored_json = dumps_trip_counts(
+        {
+            "plate": {"accepted": 57, "basis_kg": 1_060_200.0, "formula": 57},
+            "pile": {"accepted": 125, "basis_kg": 1.0, "formula": 2},
+            "fbs_lm": {"accepted": 8, "basis_kg": 1.0, "formula": 1},
+            "notices": [],
+        }
+    )
+    save_trip_counts_json(kp_id, stored_json, db_path)
+
+    def _forbidden(*_args: object, **_kwargs: object) -> None:
+        raise AssertionError("archive GET must not save trip_counts_json")
+
+    monkeypatch.setattr(
+        "app.repositories.kp_archive_repository.KpArchiveRepository.save_trip_counts_json",
+        _forbidden,
+    )
+
+    def _read() -> str:
+        with sqlite3.connect(db_path) as conn:
+            row = conn.execute(
+                "SELECT trip_counts_json FROM kp_meta WHERE kp_id = ?",
+                (kp_id,),
+            ).fetchone()
+        assert row is not None and row[0] is not None
+        return str(row[0])
+
+    before = _read()
+    assert json.loads(before)["plate"]["accepted"] == 57
+    assert json.loads(before)["pile"]["accepted"] == 125
+    assert json.loads(before)["fbs_lm"]["accepted"] == 8
+
+    url = f"/api/v1/commercial/archive/{kp_id}"
+    first = client.get(url, cookies=_admin_cookie_mna402())
+    assert first.status_code == 200, first.text
+    body = first.json()
+    assert body["plate_trips"] == 57
+    assert body["plate_trips_formula"] == 49
+    assert body.get("plate_trips_notice") is None
+    assert _read() == before
+
+    second = client.get(url, cookies=_admin_cookie_mna402())
+    assert second.status_code == 200, second.text
+    assert second.json()["plate_trips"] == 57
+    assert second.json().get("plate_trips_notice") is None
+    assert _read() == before
+
+
 def test_download_xlsx_delivery_in_unit_embeds_and_leaves_db(
     mixed_archive_client: tuple[TestClient, str, Path],
 ) -> None:

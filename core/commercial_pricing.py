@@ -537,6 +537,7 @@ def calculate_total_cost(
     kp_id: int | None = None,
     trip_counts: Any = None,
     accepted_trip_overrides: dict[str, int] | None = None,
+    reset_plate_on_mass_change: bool = True,
 ) -> dict[str, Any]:
     """
     Рассчитывает общую стоимость заказа.
@@ -677,6 +678,7 @@ def calculate_total_cost(
         ),
         fbs_lm=fbs_input,
         overrides=accepted_trip_overrides,
+        reset_plate_on_mass_change=reset_plate_on_mass_change,
     )
     plate_trips = resolved.accepted["plate"]
     pile_trips = resolved.accepted["pile"]

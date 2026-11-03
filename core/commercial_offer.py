@@ -241,6 +241,7 @@ def calculate_total_cost(
     long_pile_delivery: dict | None = None,
     kp_id: int | None = None,
     trip_counts: dict | None = None,
+    reset_plate_on_mass_change: bool = True,
 ) -> Dict:
     return _calculate_total_cost(
         order_data,
@@ -256,6 +257,7 @@ def calculate_total_cost(
         long_pile_delivery=long_pile_delivery,
         trip_counts=trip_counts,
         kp_id=kp_id,
+        reset_plate_on_mass_change=reset_plate_on_mass_change,
     )
 
 
@@ -282,14 +284,25 @@ _TABLE_BODY_SIZE = 10
 _TABLE_HEADER_SIZE = 11
 _TABLE_CELL_PAD = 6  # must match LEFTPADDING/RIGHTPADDING in TableStyle
 _MONEY_FIT_SAMPLE = "999 999 999,99"  # headroom for 9-digit sums with thin spaces
+_WEIGHT_FIT_SAMPLE = "9 999 999,99"  # headroom past «228 480,00»
+
+
+def _fitted_col_width(*samples: tuple[str, str, int]) -> float:
+    """Column width from the widest sample, plus cell padding."""
+    text = max(pdfmetrics.stringWidth(sample, font, size) for sample, font, size in samples)
+    return text + 2 * _TABLE_CELL_PAD + 2
 
 
 def _money_col_width() -> float:
     """Width for Цена/Сумма so formatted amounts stay inside the cell."""
-    return (
-        pdfmetrics.stringWidth(_MONEY_FIT_SAMPLE, FONT_NORMAL, _TABLE_BODY_SIZE)
-        + 2 * _TABLE_CELL_PAD
-        + 2  # gap so digits do not touch the grid line
+    return _fitted_col_width((_MONEY_FIT_SAMPLE, FONT_NORMAL, _TABLE_BODY_SIZE))
+
+
+def _weight_col_width() -> float:
+    """Width for Вес(кг): header on one line and a cargo total inside the cell."""
+    return _fitted_col_width(
+        (_WEIGHT_FIT_SAMPLE, FONT_NORMAL, _TABLE_BODY_SIZE),
+        ("Вес(кг)", FONT_BOLD, _TABLE_HEADER_SIZE),
     )
 
 
@@ -353,6 +366,7 @@ def generate_commercial_offer_pdf(
     long_pile_delivery: Optional[Dict] = None,
     trip_counts: Optional[Dict] = None,
     suppress_company_contacts: bool = False,
+    reset_plate_on_mass_change: bool = True,
 ) -> io.BytesIO:
     """
     Генерирует коммерческое предложение в формате PDF, повторяя фирменное
@@ -586,6 +600,7 @@ def generate_commercial_offer_pdf(
         long_pile_delivery=long_pile_delivery,
         trip_counts=trip_counts,
         kp_id=kp_db_id,
+        reset_plate_on_mass_change=reset_plate_on_mass_change,
     )
     if unified:
         order_mode = "unified"
@@ -660,6 +675,11 @@ def generate_commercial_offer_pdf(
             sum_str
         ])
 
+    cargo_kg = document_cargo_weight_kg(
+        order_data,
+        pile_catalog_db_path=pile_catalog_db_path,
+        weight_catalog_db_path=weight_catalog_db_path,
+    )
     delivery_export = kp_delivery_export_lines(
         totals, plate_trip_cost=trip_cost, pile_trip_cost=pile_trip
     )
@@ -676,7 +696,9 @@ def generate_commercial_offer_pdf(
         elif step_order:
             table_data.append([idx, label, trips, price, amount])
         else:
-            table_data.append([idx, label, trips, "рейс", "0,00", price, amount])
+            table_data.append(
+                [idx, label, trips, "рейс", _format_money_ru(cargo_kg), price, amount]
+            )
     
     no_width = 10 * mm
     qty_width = 14 * mm
@@ -713,7 +735,7 @@ def generate_commercial_offer_pdf(
             col_widths = [no_width, name_width, qty_width, price_width, sum_width]
     else:
         unit_width = 11 * mm
-        weight_width = 20 * mm
+        weight_width = _weight_col_width()
         fixed_total = no_width + qty_width + unit_width + weight_width + price_width + sum_width
         name_width = content_width - fixed_total
         if name_width <= 0:
@@ -773,11 +795,7 @@ def generate_commercial_offer_pdf(
     # Она сохраняется в отдельный Excel файл и отправляется вместе с PDF
     
     total_items = len(table_data) - 1
-    total_weight = document_cargo_weight_kg(
-        order_data,
-        pile_catalog_db_path=pile_catalog_db_path,
-        weight_catalog_db_path=weight_catalog_db_path,
-    )
+    total_weight = cargo_kg
     weight_summary = f"{total_weight:,.3f}".replace(',', 'X').replace('.', ',').replace('X', ' ')
     subtotal_str = _format_money_ru(totals['subtotal'])
     total_with_vat_str = _format_money_ru(totals['total_with_vat'])

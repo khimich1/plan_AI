@@ -10,8 +10,20 @@ from typing import Any
 import pytest
 from openpyxl import load_workbook
 from openpyxl.worksheet.worksheet import Worksheet
+from reportlab.lib.units import mm
+from reportlab.pdfbase import pdfmetrics
 
-from core.commercial_offer import generate_commercial_offer_pdf
+from core.cargo_delivery_pricing import document_cargo_weight_kg
+from core.commercial_offer import (
+    FONT_BOLD,
+    FONT_NORMAL,
+    _TABLE_BODY_SIZE,
+    _TABLE_CELL_PAD,
+    _TABLE_HEADER_SIZE,
+    _format_money_ru,
+    _weight_col_width,
+    generate_commercial_offer_pdf,
+)
 from core.commercial_offer_xlsx import generate_commercial_offer_xlsx
 from core.kp_plate_weight import resolve_kp_line_weight_kg
 from core.pile_catalog import PileCatalogEntry, upsert_pile_catalog
@@ -38,6 +50,13 @@ def _xlsx_weight(kg: float) -> str:
 
 def _flat(text: str) -> str:
     return " ".join(text.split())
+
+
+def _line_containing(text: str, needle: str) -> str:
+    matches = [_flat(line) for line in text.splitlines() if needle in line]
+    assert matches, f"{needle!r} not found in PDF text:\n{text}"
+    assert len(matches) == 1, f"{needle!r} matched {matches!r}"
+    return matches[0]
 
 
 def _seed_catalog(tmp_path: Path, *, fbs_kg: float | None = None) -> str:
@@ -101,15 +120,15 @@ def _plate_line(*, qty: int = 1) -> dict[str, Any]:
 
 
 def _pdf_text(order: list[dict[str, Any]], **overrides: Any) -> str:
-    buffer = generate_commercial_offer_pdf(
-        order,
-        offer_number="11",
-        offer_date="21.10.2026",
-        customer_name="ООО «АВТОВИД»",
-        discount_percent=0,
-        logistics_cost=0.0,
-        **overrides,
-    )
+    kwargs: dict[str, Any] = {
+        "offer_number": "11",
+        "offer_date": "21.10.2026",
+        "customer_name": "ООО «АВТОВИД»",
+        "discount_percent": 0,
+        "logistics_cost": 0.0,
+    }
+    kwargs.update(overrides)
+    buffer = generate_commercial_offer_pdf(order, **kwargs)
     with tempfile.NamedTemporaryFile(suffix=".pdf") as handle:
         handle.write(buffer.getvalue())
         handle.flush()
@@ -122,15 +141,15 @@ def _pdf_text(order: list[dict[str, Any]], **overrides: Any) -> str:
 
 
 def _xlsx_sheet(order: list[dict[str, Any]], **overrides: Any) -> Worksheet:
-    buffer = generate_commercial_offer_xlsx(
-        order,
-        offer_number="11",
-        offer_date="21.10.2026",
-        customer_name="ООО «АВТОВИД»",
-        discount_percent=0,
-        logistics_cost=0.0,
-        **overrides,
-    )
+    kwargs: dict[str, Any] = {
+        "offer_number": "11",
+        "offer_date": "21.10.2026",
+        "customer_name": "ООО «АВТОВИД»",
+        "discount_percent": 0,
+        "logistics_cost": 0.0,
+    }
+    kwargs.update(overrides)
+    buffer = generate_commercial_offer_xlsx(order, **kwargs)
     return load_workbook(buffer)["КП"]
 
 
@@ -310,3 +329,63 @@ def test_bridge_steps_marches_and_kind_only_pile_use_catalog_weight(tmp_path: Pa
     )
 
     assert total == pytest.approx(expected)
+
+
+def test_plate_pdf_delivery_row_shows_document_cargo_weight(tmp_path: Path) -> None:
+    """Плиты: «Вес(кг)» доставки — килограммы документа, два знака; подвал — три."""
+    db_path = _seed_catalog(tmp_path)
+    plate = _plate_line(qty=2)
+    order = [plate]
+    cargo_kg = document_cargo_weight_kg(order, pile_catalog_db_path=db_path)
+    assert cargo_kg > 0
+    cell = _format_money_ru(cargo_kg)
+    assert cell != "0,00"
+    _, plate_kg = resolve_kp_line_weight_kg(plate)
+
+    pdf_text = _pdf_text(order, pile_catalog_db_path=db_path, logistics_cost=5000.0)
+    delivery = _line_containing(pdf_text, "доставке грузов")
+    plate_row = _line_containing(pdf_text, "ПБ 60-12-8")
+
+    assert cell in delivery
+    assert "0,00" not in delivery.split()
+    assert _format_money_ru(plate_kg) in plate_row
+    assert f"общим весом {_pdf_weight(cargo_kg)} кг" in _flat(pdf_text)
+
+
+def test_plate_pdf_weight_column_fits_cargo_total() -> None:
+    """«228 480,00» и заголовок «Вес(кг)» помещаются в колонку, не в соседнюю ячейку."""
+    needed = max(
+        pdfmetrics.stringWidth("228 480,00", FONT_NORMAL, _TABLE_BODY_SIZE),
+        pdfmetrics.stringWidth("Вес(кг)", FONT_BOLD, _TABLE_HEADER_SIZE),
+    )
+    assert _weight_col_width() >= needed + 2 * _TABLE_CELL_PAD
+    assert _weight_col_width() > 20 * mm
+
+
+def test_plate_xlsx_delivery_row_shows_document_cargo_weight(tmp_path: Path) -> None:
+    """Плиты: «Вес(кг)» строки доставки в XLSX — те же килограммы, что в подвале."""
+    db_path = _seed_catalog(tmp_path)
+    order = [_plate_line(qty=2)]
+    cargo_kg = document_cargo_weight_kg(order, pile_catalog_db_path=db_path)
+    assert cargo_kg > 0
+
+    sheet = _xlsx_sheet(order, pile_catalog_db_path=db_path, logistics_cost=5000.0)
+    weight_col = name_col = header_row = None
+    for row in sheet.iter_rows():
+        values = [cell.value for cell in row]
+        if "Вес(кг)" in values and "Наименование" in values:
+            header_row = row[0].row
+            weight_col = values.index("Вес(кг)") + 1
+            name_col = values.index("Наименование") + 1
+            break
+    assert header_row is not None and weight_col is not None and name_col is not None
+
+    delivery_weight = None
+    for row_idx in range(header_row + 1, sheet.max_row + 1):
+        name = sheet.cell(row_idx, name_col).value
+        if isinstance(name, str) and "доставке" in name:
+            delivery_weight = sheet.cell(row_idx, weight_col).value
+            break
+
+    assert delivery_weight == pytest.approx(cargo_kg)
+    assert f"общим весом {_xlsx_weight(cargo_kg)} кг" in _xlsx_text(sheet)

@@ -103,8 +103,6 @@ export const archiveApi = {
       pileTripOverrides?: Record<string, number>;
       longPileDelivery?: Record<string, { trip_cost: number }>;
       plateTrips?: number;
-      pileTrips?: number;
-      fbsLmTrips?: number;
       dismissTripNotices?: Array<"plate" | "pile" | "fbs_lm">;
     },
   ) =>
@@ -116,8 +114,6 @@ export const archiveApi = {
         pile_trip_overrides: payload.pileTripOverrides,
         long_pile_delivery: payload.longPileDelivery,
         plate_trips: payload.plateTrips,
-        pile_trips: payload.pileTrips,
-        fbs_lm_trips: payload.fbsLmTrips,
         dismiss_trip_notices: payload.dismissTripNotices,
       }),
       { "Content-Type": "application/json" },

@@ -129,6 +129,7 @@ def calculate_total_cost(
     long_pile_delivery: dict | None = None,
     kp_id: int | None = None,
     trip_counts: dict | None = None,
+    reset_plate_on_mass_change: bool = True,
 ) -> Dict:
     return _calculate_total_cost(
         order_data,
@@ -144,6 +145,7 @@ def calculate_total_cost(
         long_pile_delivery=long_pile_delivery,
         trip_counts=trip_counts,
         kp_id=kp_id,
+        reset_plate_on_mass_change=reset_plate_on_mass_change,
     )
 
 
@@ -206,6 +208,7 @@ def generate_commercial_offer_xlsx(
     long_pile_delivery: Optional[Dict] = None,
     trip_counts: Optional[Dict] = None,
     suppress_company_contacts: bool = False,
+    reset_plate_on_mass_change: bool = True,
 ) -> io.BytesIO:
     """
     Генерирует коммерческое предложение в формате XLSX с расчётными формулами
@@ -378,6 +381,7 @@ def generate_commercial_offer_xlsx(
         long_pile_delivery=long_pile_delivery,
         trip_counts=trip_counts,
         kp_id=kp_db_id,
+        reset_plate_on_mass_change=reset_plate_on_mass_change,
     )
     total_weight = document_cargo_weight_kg(
         order_data,
@@ -420,7 +424,7 @@ def generate_commercial_offer_xlsx(
             row["Тип"] = ""
         elif not pile_order and not bridge_pile_order and not fbs_order and not march_order and not step_order:
             row["Ед."] = "рейс"
-            row["Вес(кг)"] = 0.0
+            row["Вес(кг)"] = total_weight
         table_data.append(row)
 
     delivery_row_count = len(delivery_export)
@@ -680,7 +684,7 @@ def generate_commercial_offer_xlsx(
             else:
                 worksheet.column_dimensions['C'].width = 10
                 worksheet.column_dimensions['D'].width = 8
-                worksheet.column_dimensions['E'].width = 15
+                worksheet.column_dimensions['E'].width = 18
                 worksheet.column_dimensions['F'].width = 18
                 worksheet.column_dimensions['G'].width = 18
         

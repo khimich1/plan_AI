@@ -257,7 +257,7 @@ describe("useCommercialOfferWizard", () => {
     expect(result.current.currentDraft?.draft_id).toBe("draft-created-99");
   });
 
-  it("forwards discount and pile logistics fields to updateDraftMeta", async () => {
+  it("forwards discount, pile logistics, and plate trip count to updateDraftMeta", async () => {
     const updated = makeDraft();
     vi.mocked(commercialOfferApi.updateDraftMeta).mockResolvedValue(updated);
 
@@ -271,6 +271,8 @@ describe("useCommercialOfferWizard", () => {
         discountPercent: 5,
         pileLogisticsCost: 1500,
         pileTripOverrides: { "C18-40T8": 3 },
+        plateTrips: 10,
+        dismissTripNotices: ["plate"],
       });
     });
 
@@ -286,6 +288,11 @@ describe("useCommercialOfferWizard", () => {
       logisticsCost: undefined,
       pileLogisticsCost: 1500,
       pileTripOverrides: { "C18-40T8": 3 },
+      longPileDelivery: undefined,
+      plateTrips: 10,
+      pileTrips: undefined,
+      fbsLmTrips: undefined,
+      dismissTripNotices: ["plate"],
     });
   });
 });
