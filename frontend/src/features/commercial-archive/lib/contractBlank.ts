@@ -121,7 +121,7 @@ export const blankIsReady = (form: SupplyContractFormValues): boolean => {
     return false;
   }
   if (form.authority_basis === "доверенность") {
-    if (!form.poa_number.trim() || !form.poa_date.trim()) {
+    if (!form.poa_number?.trim() || !form.poa_date?.trim()) {
       return false;
     }
   }
@@ -129,7 +129,7 @@ export const blankIsReady = (form: SupplyContractFormValues): boolean => {
     return false;
   }
   if (FORMS_NEEDING_KPP.has(form.legal_form)) {
-    return Boolean(form.kpp.trim() && form.signatory_position.trim());
+    return Boolean(form.kpp?.trim() && form.signatory_position?.trim());
   }
   return true;
 };
