@@ -8,6 +8,8 @@ import re
 from decimal import Decimal, ROUND_HALF_UP
 from typing import Any, Literal, Mapping
 
+from core.delivery_invoice_parity import ParityLine, delivery_invoice_lines
+
 INVOICE_DOCUMENT = "КоммерческоеПредложение"
 INVOICE_WAREHOUSES = (
     "Склад Готовой Продукции",
@@ -204,7 +206,10 @@ def _document(
     if warehouse_name:
         document["Склад"] = warehouse_name
     document["Самовывоз"] = all(kopecks <= 0 for kopecks in shares)
-    document["ПроцентСкидки"] = offer.get("discount_percent")
+    if "discount_percent" in totals:
+        document["ПроцентСкидки"] = totals["discount_percent"]
+    else:
+        document["ПроцентСкидки"] = offer.get("discount_percent")
     document["СуммаСкидки"] = _json_rub(totals["discount"])
     document["СуммаНДС"] = _json_rub(totals["vat"])
     document["СуммаДокумента"] = _json_rub(totals["payable"])
@@ -237,7 +242,10 @@ def _goods_and_totals(
     offer: Mapping[str, Any],
     lines: list[Mapping[str, Any]],
     shares: list[int],
-) -> tuple[list[dict[str, Any]], dict[str, Decimal]]:
+) -> tuple[list[dict[str, Any]], dict[str, Decimal | float]]:
+    parity = _parity_lines(offer, lines, shares)
+    if parity is not None:
+        return _goods_from_parity(lines, shares, parity)
     goods: list[dict[str, Any]] = []
     payable = Decimal(0)
     vat = Decimal(0)
@@ -249,6 +257,59 @@ def _goods_and_totals(
         discount += money["discount"]
         goods.append(_goods_line(offer, line, money))
     return goods, {"payable": payable, "vat": vat, "discount": discount}
+
+
+def _parity_lines(
+    offer: Mapping[str, Any],
+    lines: list[Mapping[str, Any]],
+    shares: list[int],
+) -> list[ParityLine] | None:
+    if sum(shares) <= 0:
+        return None
+    return delivery_invoice_lines(
+        prices=[_decimal(line.get("price") if "price" in line else 0) for line in lines],
+        qty=[_qty(line.get("qty")) for line in lines],
+        target_payable=[
+            _line_payable(offer, line, kopecks) for line, kopecks in zip(lines, shares)
+        ],
+        delivery_rub=[_kopecks_to_rub(kopecks) for kopecks in shares],
+    )
+
+
+def _goods_from_parity(
+    lines: list[Mapping[str, Any]],
+    shares: list[int],
+    parity: list[ParityLine],
+) -> tuple[list[dict[str, Any]], dict[str, Decimal | float]]:
+    goods: list[dict[str, Any]] = []
+    payable = Decimal(0)
+    vat = Decimal(0)
+    discount = Decimal(0)
+    for line, kopecks, row in zip(lines, shares, parity):
+        payable += row.payable
+        vat += row.vat
+        discount += row.discount_amount
+        goods.append(
+            _goods_line(
+                {},
+                line,
+                {
+                    "payable": row.payable,
+                    "vat": row.vat,
+                    "net": row.net,
+                    "discount": row.discount_amount,
+                    "delivery": _kopecks_to_rub(kopecks),
+                },
+                price=row.price,
+                discount_percent=row.discount_percent,
+            )
+        )
+    return goods, {
+        "payable": payable,
+        "vat": vat,
+        "discount": discount,
+        "discount_percent": _json_rub(parity[0].discount_percent),
+    }
 
 
 def _line_money(
@@ -324,8 +385,17 @@ def _goods_line(
     offer: Mapping[str, Any],
     line: Mapping[str, Any],
     money: Mapping[str, Decimal],
+    *,
+    price: Decimal | None = None,
+    discount_percent: Decimal | None = None,
 ) -> dict[str, Any]:
-    price = line.get("price") if "price" in line else 0
+    raw_price = line.get("price") if "price" in line else 0
+    shown_price = _json_rub(price) if price is not None else raw_price
+    shown_percent = (
+        _json_rub(discount_percent)
+        if discount_percent is not None
+        else _line_discount(offer, line)
+    )
     return {
         "Номенклатура": line.get("name") or line.get("nomenclature") or "",
         "GUID": line.get("guid"),
@@ -333,8 +403,8 @@ def _goods_line(
         "Количество": line.get("qty"),
         "ЕдиницаИзмерения": LINE_UNIT,
         "ВидЦены": PRICE_KIND,
-        "Цена": price,
-        "ПроцентСкидки": _line_discount(offer, line),
+        "Цена": shown_price,
+        "ПроцентСкидки": shown_percent,
         "СуммаСкидки": _json_rub(money["discount"]),
         "Сумма": _json_rub(money["net"]),
         "СтавкаНДС": VAT_RATE_LABEL,

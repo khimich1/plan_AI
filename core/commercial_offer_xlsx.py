@@ -109,10 +109,6 @@ from core.commercial_pricing import (  # noqa: E402
     lookup_pile_price,
     lookup_step_price,
 )
-from core.embed_delivery_in_unit_price import (  # noqa: E402
-    EmbedDeliveryResult,
-    embed_delivery_in_unit_prices,
-)
 
 
 def calculate_total_cost(
@@ -178,6 +174,114 @@ def _resolve_line_unit_price(item: Dict, *, order_mode: str) -> float:
         except ImportError:
             load_class = 800
     return get_plate_price(length_m, width_m, load_class)
+
+
+def _ready_amount(totals: Dict, amount_key: str, ready_key: str) -> float:
+    if not bool(totals.get(ready_key, True)):
+        return 0.0
+    return float(totals.get(amount_key) or 0.0)
+
+
+def _ready_long_pile_amounts(totals: Dict) -> dict[int, float]:
+    """Котлы длинных свай, которые обычный XLSX уже печатает строками."""
+    if not totals.get("long_pile_delivery_enabled"):
+        return {}
+    amounts: dict[int, float] = {}
+    for row in totals.get("long_pile_lengths") or []:
+        if not isinstance(row, dict) or not row.get("ready"):
+            continue
+        amount = float(row.get("amount") or 0.0)
+        if amount <= 0:
+            continue
+        amounts[int(row.get("length_key") or 0)] = amount
+    return amounts
+
+
+def _catalog_lookup(catalog_path: Optional[str]):
+    if not catalog_path:
+        return None
+    from core.pile_catalog import load_pile_catalog, resolve_catalog_for_mark
+
+    entries = load_pile_catalog(catalog_path)
+    return lambda mark: resolve_catalog_for_mark(mark, entries)
+
+
+def _line_length_key(item: Dict, lookup) -> Optional[int]:
+    if line_product_type(item) not in {"piles", "bridge_piles"}:
+        return None
+    from core.pile_catalog import parse_bridge_pile_geometry, parse_pile_mark
+    from core.pile_trip_pricing import LONG_PILE_LENGTH_M_MIN
+
+    mark = str(item.get("mark") or item.get("name") or "").strip()
+    entry = lookup(mark) if lookup is not None and mark else None
+    length_m = getattr(entry, "length_m", None) if entry is not None else None
+    if length_m is None and mark:
+        length_m, _section = parse_bridge_pile_geometry(mark)
+        if length_m is None:
+            length_m, _section = parse_pile_mark(mark)
+    if length_m is None or float(length_m) <= LONG_PILE_LENGTH_M_MIN:
+        return None
+    return int(round(float(length_m) * 10))
+
+
+def _length_keys(
+    order_data: List[Dict],
+    totals: Dict,
+    catalog_path: Optional[str],
+) -> list[Optional[int]]:
+    if not totals.get("long_pile_delivery_enabled"):
+        return [None] * len(order_data)
+    lookup = _catalog_lookup(catalog_path)
+    return [_line_length_key(item, lookup) for item in order_data]
+
+
+def _delivery_shares_for_embed(
+    order_data: List[Dict],
+    totals: Dict,
+    catalog_path: Optional[str],
+) -> list[int]:
+    from core.embed_delivery_in_unit_price import allocate_line_delivery_kopecks
+
+    return allocate_line_delivery_kopecks(
+        qty_by_index=[max(0, int(item.get("qty") or 0)) for item in order_data],
+        product_type_by_index=[line_product_type(item) for item in order_data],
+        plate_delivery_total=float(totals.get("plate_delivery_total") or 0.0),
+        pile_delivery_total=_ready_amount(totals, "pile_delivery_total", "pile_delivery_ready"),
+        fbs_delivery_total=_ready_amount(
+            totals, "fbs_lm_delivery_total", "fbs_lm_delivery_ready"
+        ),
+        long_pile_delivery_by_length=_ready_long_pile_amounts(totals),
+        length_key_by_index=_length_keys(order_data, totals, catalog_path),
+    )
+
+
+def _parity_lines_for_embed(
+    order_data: List[Dict],
+    unit_prices: List[float],
+    discount_percent: float,
+    totals: Dict,
+    catalog_path: Optional[str],
+):
+    """Цели строк — сегодняшний _line_payable. None, если доставки нет."""
+    from core.delivery_invoice_parity import delivery_invoice_lines
+    from core.invoice_export import _line_payable
+
+    shares = _delivery_shares_for_embed(order_data, totals, catalog_path)
+    if sum(shares) <= 0:
+        return None
+    prices = [Decimal(str(price)) for price in unit_prices]
+    counts = [max(0, int(item.get("qty") or 0)) for item in order_data]
+    offer = {"discount_percent": discount_percent}
+    targets = [
+        _line_payable(offer, {"price": price, "qty": count}, kopecks)
+        for price, count, kopecks in zip(prices, counts, shares)
+    ]
+    return delivery_invoice_lines(
+        prices=prices,
+        qty=counts,
+        target_payable=targets,
+        delivery_rub=[Decimal(kopecks) / Decimal(100) for kopecks in shares],
+    )
 
 
 def generate_commercial_offer_xlsx(
@@ -383,27 +487,20 @@ def generate_commercial_offer_xlsx(
     delivery_export = kp_delivery_export_lines(
         totals, plate_trip_cost=trip_cost, pile_trip_cost=pile_trip
     )
-    embedded_result: EmbedDeliveryResult | None = None
+    parity_lines = None
     if embed_delivery_in_unit_price:
-        embedded_result = embed_delivery_in_unit_prices(
-            qty_by_index=[int(item.get("qty") or 0) for item in order_data],
-            product_type_by_index=[line_product_type(item) for item in order_data],
-            unit_price_by_index=resolved_unit_prices,
-            discount_percent=discount_percent,
-            plate_delivery_total=float(totals.get("plate_delivery_total") or 0.0),
-            pile_delivery_total=float(totals.get("pile_delivery_total") or 0.0),
+        parity_lines = _parity_lines_for_embed(
+            order_data,
+            resolved_unit_prices,
+            discount_percent,
+            totals,
+            pile_catalog_db_path,
         )
-        for i, embedded in enumerate(embedded_result.lines):
-            table_data[i]["Цена"] = embedded.unit_price
-            table_data[i]["Сумма"] = embedded.line_sum
-        delivery_export = [
-            line
-            for line in delivery_export
-            if not (
-                (line["label"] == "Доставка свай" and embedded_result.embedded_pile)
-                or (line["label"] != "Доставка свай" and embedded_result.embedded_plate)
-            )
-        ]
+        if parity_lines is not None:
+            for index, parity in enumerate(parity_lines):
+                table_data[index]["Цена"] = float(parity.invoice_unit_price)
+                table_data[index]["Сумма"] = float(parity.payable)
+        delivery_export = []
     for line in delivery_export:
         row: dict[str, Any] = {
             "№": len(table_data) + 1,
@@ -586,16 +683,14 @@ def generate_commercial_offer_xlsx(
         worksheet[f'A{vat_row}'] = "в том числе НДС (22%)"
         worksheet[f'A{vat_row}'].font = summary_font
         worksheet[f'A{vat_row}'].alignment = left_align
-        if uses_per_line_included_vat(kp_db_id):
-            if embed_delivery_in_unit_price and embedded_result is not None:
-                embedded_sums = [
-                    Decimal(str(line.line_sum)) for line in embedded_result.lines
-                ]
-                vat_cell_value: float | str = float(
-                    vat_included_from_line_sums(embedded_sums)
-                )
+        if embed_delivery_in_unit_price:
+            if parity_lines is not None:
+                vat_source = [row.payable for row in parity_lines]
             else:
-                vat_cell_value = float(totals["vat_amount"])
+                vat_source = [Decimal(str(row["Сумма"])) for row in table_data]
+            vat_cell_value: float | str = float(vat_included_from_line_sums(vat_source))
+        elif uses_per_line_included_vat(kp_db_id):
+            vat_cell_value = float(totals["vat_amount"])
         else:
             vat_cell_value = (
                 f"=SUM({sum_letter}{first_data_row}:{sum_letter}{last_plate_row})*{VAT_RATE}"
@@ -605,28 +700,8 @@ def generate_commercial_offer_xlsx(
         worksheet[f'{sum_letter}{vat_row}'].number_format = '#,##0.00'
         worksheet[f'{sum_letter}{vat_row}'].alignment = right_align
 
-        embed_footnote = False
-        if embedded_result is not None and (
-            embedded_result.embedded_plate or embedded_result.embedded_pile
-        ):
-            n_trips = 0
-            x_amount = 0.0
-            if embedded_result.embedded_plate:
-                n_trips += int(totals.get("plate_trips") or 0)
-                x_amount += float(totals.get("plate_delivery_total") or 0.0)
-            if embedded_result.embedded_pile:
-                n_trips += int(totals.get("pile_trips") or 0)
-                x_amount += float(totals.get("pile_delivery_total") or 0.0)
-            footnote_row = vat_row + 1
-            worksheet[f"A{footnote_row}"] = (
-                f"В стоимость изделий включена доставка {n_trips} рейс(ов) "
-                f"на сумму {x_amount:.2f} ₽. Скидка на доставку не распространяется."
-            )
-            worksheet[f"A{footnote_row}"].font = table_font
-            embed_footnote = True
-
         # Условия
-        conditions_row = vat_row + 3 if embed_footnote else vat_row + 2
+        conditions_row = vat_row + 2
         
         # Условия поставки (строка 28 с учётом смещения)
         if delivery_conditions:
