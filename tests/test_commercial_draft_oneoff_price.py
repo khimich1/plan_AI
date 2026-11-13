@@ -271,3 +271,29 @@ def test_clear_null_on_catalog_line_rejected(
         json={"unit_price": None},
     )
     assert response.status_code == 400, response.text
+
+
+def test_guid_replace_does_not_change_oneoff_price(
+    piles_client_db: tuple[TestClient, Path],
+) -> None:
+    """NG-304: договорную цену менеджер заменой марки не переписывает."""
+    client, _pb_db = piles_client_db
+    draft_id, line = _create_unpriced_pile_draft(client)
+    line_id = str(line["line_id"])
+    priced = client.patch(
+        f"/api/v1/commercial/drafts/{draft_id}/lines/{line_id}",
+        json={"unit_price": 1000},
+    )
+    assert priced.status_code == 200, priced.text
+    updated = _line_by_id(list(priced.json()["order_data"] or []), line_id)
+    mark = str(updated.get("mark") or updated.get("name") or "")
+    response = client.post(
+        f"/api/v1/commercial/drafts/{draft_id}/guid-replace",
+        json={"product_kind": "pile", "mark": mark, "target_mark": "С110.30-8"},
+    )
+    assert response.status_code == 400, response.text
+    assert "оговор" in response.text
+    again = client.get(f"/api/v1/commercial/drafts/{draft_id}")
+    kept = _line_by_id(list(again.json()["order_data"] or []), line_id)
+    assert float(kept["unit_price"]) == pytest.approx(1000)
+    assert kept.get("price_source") == "oneoff"

@@ -842,6 +842,16 @@ export const OfferDetailsDrawer = ({ open, kpId, onClose }: Props) => {
               <div>
                 <div style={{ color: "#667085", fontSize: "0.85rem" }}>Клиент</div>
                 <div style={{ fontWeight: 600 }}>{offer.customer_name || "—"}</div>
+                {offer.mark_changes && offer.mark_changes.length > 0 ? (
+                  <ul data-testid="mark-changes" style={{ margin: "0.35rem 0 0", paddingLeft: "1.1rem" }}>
+                    {offer.mark_changes.map((change) => (
+                      <li key={`${change.changed_at}-${change.mark_old}-${change.mark_new}`}>
+                        марка {change.mark_old} заменена на {change.mark_new}, {change.changed_at}
+                        {change.changed_by ? `, ${change.changed_by}` : ""}
+                      </li>
+                    ))}
+                  </ul>
+                ) : null}
                 {phaseOffer?.counterparty_id != null &&
                   phaseOffer.invoice_export_block?.trim() === MISSING_SUPPLY_CONTRACT && (
                     <div style={{ marginTop: "0.35rem", display: "grid", gap: "0.5rem" }}>

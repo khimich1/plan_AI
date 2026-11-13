@@ -13,13 +13,18 @@ from app.core.http_errors import (
     raise_parse_client_error,
     raise_unexpected_server_error,
     raise_unpriced_plates_error,
+    raise_unprocessable_client_error,
     raise_validation_client_error,
 )
 from app.services.counterparties_service import CounterpartyValidationError
 from app.dependencies.auth import REQUIRE_ADMIN_OR_MANAGER
 from app.dependencies.commercial_draft import check_draft_ownership, verify_draft_ownership
 from app.dependencies.plate_context import get_plate_order_context
-from app.dependencies.services import get_commercial_service, get_commercial_workflow_service
+from app.dependencies.services import (
+    get_commercial_service,
+    get_commercial_workflow_service,
+    get_guid_explain_service,
+)
 from app.schemas.commercial import (
     CommercialAppendStartRequest, CommercialBridgePileGradesUpdateRequest,
     CommercialCompositePileGradesUpdateRequest,
@@ -36,7 +41,14 @@ from app.schemas.commercial import (
     CommercialWidePlatesResolveRequest,
     GuidCheckResponse,
 )
+from app.schemas.guid_explain import (
+    DraftGuidReplaceRequest,
+    GuidExplainResponse,
+    GuidReplacePreviewResponse,
+    GuidSearchResponse,
+)
 from app.services.commercial_draft_service import CommercialDraftService
+from app.services.guid_explain_service import GuidExplainError, GuidExplainService
 from app.services.commercial_line_lint import LineLint, lint_source_lines, unparsed_line_texts
 from app.services.commercial_service import CommercialService
 from app.services.commercial_upload_validation import (
@@ -44,6 +56,7 @@ from app.services.commercial_upload_validation import (
 )
 from app.services.commercial_workflow_service import CommercialWorkflowService
 from core.exceptions import PlateParseError, UnpricedPlatesError
+from core.guid_explain import ROLE_MANAGER
 from core.plate_order_context import PlateOrderContext
 
 router = APIRouter(prefix="/commercial", tags=["commercial"])
@@ -654,11 +667,18 @@ def generate_draft_files(
 @router.post("/drafts/{draft_id}/save", response_model=CommercialSaveOfferResponse)
 def save_draft_offer(
     payload: CommercialSaveDraftRequest, draft_id: str = Depends(verify_draft_ownership),
+    user: dict = Depends(REQUIRE_ADMIN_OR_MANAGER),
     workflow: CommercialWorkflowService = Depends(get_commercial_workflow_service),
 ) -> CommercialSaveOfferResponse:
+    actor = str(user.get("username") or "").strip() or None
     result = _sync_draft(
         "save_draft_offer",
-        lambda: workflow.save_draft(draft_id, mode=payload.mode, execution_terms_input=payload.execution_terms_input),
+        lambda: workflow.save_draft(
+            draft_id,
+            mode=payload.mode,
+            execution_terms_input=payload.execution_terms_input,
+            changed_by=actor,
+        ),
         unpriced=True,
     )
     return CommercialSaveOfferResponse(draft_id=draft_id, **result)
@@ -711,6 +731,85 @@ def check_draft_guids(
             for item in report.missing
         ]
     )
+
+
+@router.get("/drafts/{draft_id}/guid-explain", response_model=GuidExplainResponse)
+def explain_draft_guid(
+    product_kind: str = Query(..., min_length=1),
+    mark: str = Query(..., min_length=1),
+    draft_id: str = Depends(verify_draft_ownership),
+    service: GuidExplainService = Depends(get_guid_explain_service),
+) -> GuidExplainResponse:
+    """Почему нет GUID у строки черновика. Роль — менеджер: выбор только при одном номере."""
+    del draft_id
+    try:
+        return service.explain(product_kind, mark, role=ROLE_MANAGER)
+    except GuidExplainError as exc:
+        raise_unprocessable_client_error(
+            exc, where="commercial.explain_draft_guid", detail=str(exc)
+        )
+
+
+@router.get("/drafts/{draft_id}/guid-search", response_model=GuidSearchResponse)
+def search_draft_guid(
+    product_kind: str = Query(..., min_length=1),
+    q: str = Query(default=""),
+    draft_id: str = Depends(verify_draft_ownership),
+    service: GuidExplainService = Depends(get_guid_explain_service),
+) -> GuidSearchResponse:
+    """Поиск марки своего вида для менеджера: выбор только при одном номере."""
+    del draft_id
+    try:
+        return service.search(product_kind, q, role=ROLE_MANAGER)
+    except GuidExplainError as exc:
+        raise_unprocessable_client_error(
+            exc, where="commercial.search_draft_guid", detail=str(exc)
+        )
+
+
+@router.post(
+    "/drafts/{draft_id}/guid-replace/preview",
+    response_model=GuidReplacePreviewResponse,
+)
+def preview_draft_guid_replace(
+    payload: DraftGuidReplaceRequest,
+    draft_id: str = Depends(verify_draft_ownership),
+    workflow: CommercialWorkflowService = Depends(get_commercial_workflow_service),
+) -> GuidReplacePreviewResponse:
+    """Деньги черновика до и после замены. Записи нет."""
+    result = _sync_draft(
+        "preview_draft_guid_replace",
+        lambda: workflow.preview_guid_mark(
+            draft_id,
+            product_kind=payload.product_kind,
+            mark=payload.mark,
+            target_mark=payload.target_mark,
+        ),
+        client_detail=True,
+    )
+    return GuidReplacePreviewResponse.model_validate(result)
+
+
+@router.post(
+    "/drafts/{draft_id}/guid-replace",
+    response_model=CommercialDraftDetailsResponse,
+)
+def replace_draft_guid(
+    payload: DraftGuidReplaceRequest,
+    draft_id: str = Depends(verify_draft_ownership),
+    workflow: CommercialWorkflowService = Depends(get_commercial_workflow_service),
+) -> CommercialDraftDetailsResponse:
+    """Замена марки во всех строках черновика. Очередь не трогается."""
+    return _details(_sync_draft(
+        "replace_draft_guid",
+        lambda: workflow.replace_guid_mark(
+            draft_id,
+            product_kind=payload.product_kind,
+            mark=payload.mark,
+            target_mark=payload.target_mark,
+        ),
+        client_detail=True,
+    ))
 
 
 @router.get("/drafts/{draft_id}", response_model=CommercialDraftDetailsResponse)

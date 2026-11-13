@@ -1,6 +1,11 @@
 import { httpClient } from "@/shared/api/httpClient";
 import type {
   DuplicateResolveResponse,
+  GuidExplainResponse,
+  GuidReplaceBody,
+  GuidReplacePreview,
+  GuidReplaceResult,
+  GuidSearchResponse,
   GuidTasksResponse,
   Import1cResponse,
   NomenclatureProductKind,
@@ -21,6 +26,26 @@ export const nomenclatureApi = {
   },
 
   listTasks: () => httpClient.get<GuidTasksResponse>(`${BASE}/tasks`),
+
+  explainGuid: (productKind: string, mark: string) =>
+    httpClient.get<GuidExplainResponse>(
+      `${BASE}/guid-explain?${new URLSearchParams({ product_kind: productKind, mark })}`,
+    ),
+
+  searchGuid: (productKind: string, query: string) =>
+    httpClient.get<GuidSearchResponse>(
+      `${BASE}/guid-search?${new URLSearchParams({ product_kind: productKind, q: query })}`,
+    ),
+
+  previewGuidReplace: (body: GuidReplaceBody) =>
+    httpClient.post<GuidReplacePreview>(
+      `${BASE}/guid-replace/preview`,
+      JSON.stringify(body),
+      JSON_HEADERS,
+    ),
+
+  commitGuidReplace: (body: GuidReplaceBody) =>
+    httpClient.post<GuidReplaceResult>(`${BASE}/guid-replace`, JSON.stringify(body), JSON_HEADERS),
 
   listDuplicates: () => httpClient.get<GuidTasksResponse>(`${BASE}/duplicates`),
 

@@ -23,6 +23,7 @@ import {
   RESOLVE_GATE_MESSAGES,
 } from "@/features/commercial-offer/lib/productTypeConfig";
 
+import { guidCheckKeys } from "@/features/commercial-offer/hooks/useGuidCheckQuery";
 import { useCommercialOfferWizard } from "@/features/commercial-offer/hooks/useCommercialOfferWizard";
 import {
   useMultiPageRecognize,
@@ -1360,6 +1361,13 @@ export const CommercialOfferWizard = ({ productType: productTypeProp }: { produc
         onUndoLastBatch={() => void handleUndoLastBatch()}
         onDeleteLine={(lineId) => void handleDeleteLine(lineId)}
         onSaveLine={(lineId, payload) => void handleSaveLine(lineId, payload)}
+        onGuidReplaced={() => {
+          const id = currentDraft.draft_id;
+          void queryClient.invalidateQueries({ queryKey: ["commercial-offer-draft", id] });
+          void queryClient.invalidateQueries({ queryKey: ["commercial-offer-breakdown", id] });
+          void queryClient.invalidateQueries({ queryKey: guidCheckKeys.draft(id) });
+          void queryClient.invalidateQueries({ queryKey: ["guid-explain"] });
+        }}
         lineUndoToast={lineRowHandlers.undoToast}
         lineRowError={lineRowError}
       />

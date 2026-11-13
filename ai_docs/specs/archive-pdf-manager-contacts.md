@@ -4,7 +4,8 @@
 > **Статус:** спека до кода. Человек ещё не принимал этот файл как разрешение писать код.  
 > **Дата:** 2026-10-21  
 > **Идея:** [`../ideas/archive-pdf-manager-contacts.md`](../ideas/archive-pdf-manager-contacts.md)  
-> **План:** [`../develop/plans/2026-10-21-archive-pdf-manager-contacts.md`](../develop/plans/2026-10-21-archive-pdf-manager-contacts.md)
+> **План:** [`../develop/plans/2026-10-21-archive-pdf-manager-contacts.md`](../develop/plans/2026-10-21-archive-pdf-manager-contacts.md)  
+> **С 2026-11-13:** файл «доставка в цене» — PDF (`pdf_delivery_in_unit`), не XLSX. Шапка контактов у него та же, что у обычного PDF архива. См. [`kp-pdf-delivery-in-unit-price.md`](kp-pdf-delivery-in-unit-price.md).
 
 ---
 

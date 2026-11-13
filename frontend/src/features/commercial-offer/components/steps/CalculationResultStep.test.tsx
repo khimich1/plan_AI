@@ -979,6 +979,22 @@ describe("CalculationResultStep GUID warning", () => {
     expect(screen.getByRole("button", { name: "В архив" })).toBeEnabled();
   });
 
+  it("offers a collapsed explain panel for each missing mark inside the warning", () => {
+    guidCheckState.missing = [
+      {
+        product_kind: "pile",
+        mark: "С70.35-9у",
+        reason: "нет GUID 1С",
+        action_hint: "заведите карточку в 1С и загрузите отчёт",
+      },
+    ];
+    renderResultStep(makeDraft());
+    const alert = screen.getByTestId("guid-missing-alert");
+    const toggle = within(alert).getByRole("button", { name: /Почему нет номера/ });
+    expect(toggle).toHaveAttribute("aria-expanded", "false");
+    expect(alert).toHaveTextContent("Счёт в 1С не уйдёт");
+  });
+
   it("hides GUID Alert when there are no missing marks", () => {
     guidCheckState.missing = [];
     renderResultStep(makeDraft());

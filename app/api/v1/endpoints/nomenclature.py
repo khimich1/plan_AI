@@ -3,14 +3,28 @@ from __future__ import annotations
 from fastapi import APIRouter, Depends, File, Form, Query, UploadFile
 
 from app.core.http_errors import (
+    raise_bad_request_client_error,
     raise_client_error,
     raise_unexpected_server_error,
     raise_unprocessable_client_error,
 )
 from app.dependencies.auth import REQUIRE_PRICES
 from app.dependencies.services import (
+    get_guid_explain_service,
+    get_guid_replace_service,
     get_nomenclature_import_service,
     get_nomenclature_queue_service,
+)
+from app.schemas.guid_explain import (
+    GuidExplainResponse,
+    GuidReplaceMoneyOut,
+    GuidReplacePreviewItemOut,
+    GuidReplacePreviewResponse,
+    GuidReplaceRequest,
+    GuidReplaceResponse,
+    GuidReplaceSkipOut,
+    GuidReplaceWrittenOut,
+    GuidSearchResponse,
 )
 from app.schemas.nomenclature import (
     DuplicateResolveRequest,
@@ -21,6 +35,9 @@ from app.schemas.nomenclature import (
     PriceQueueResolveResponse,
 )
 from app.services.commercial_upload_validation import read_upload_file_capped
+from app.services.guid_explain_service import GuidExplainError, GuidExplainService
+from app.services.guid_replace_service import GuidReplaceService
+from core.guid_replace import GuidReplaceError
 from app.services.nomenclature_import_service import (
     NomenclatureImportError,
     NomenclatureImportService,
@@ -29,6 +46,7 @@ from app.services.nomenclature_queue_service import (
     NomenclatureQueueError,
     NomenclatureQueueService,
 )
+from core.guid_explain import ROLE_ECONOMIST
 from core.pricelist_1c_parser import Pricelist1CFormatError
 from core.universal_report_1c_parser import UniversalReport1CFormatError
 
@@ -39,7 +57,8 @@ _KIND_HELP = (
     "pile, bridge_pile, fbs, stair_flight, stair_step. "
     "Если не задана — определяется по имени файла так же, как в сверке: "
     "сваи → pile, мостовые → bridge_pile, блоки → fbs. "
-    "Плиты, составные и смешанный ЛМ без параметра → 422."
+    "Плиты (имя файла или марки) пишутся в prays_plity. "
+    "Составные и смешанный ЛМ без параметра → 422."
 )
 
 
@@ -51,7 +70,7 @@ async def import_1c_pricelist(
     _user: dict = Depends(REQUIRE_PRICES),
     service: NomenclatureImportService = Depends(get_nomenclature_import_service),
 ) -> Import1cResponse:
-    """Загрузить выгрузку 1С и сверить GUID с nomenclature_guid в pb.db."""
+    """Загрузить выгрузку 1С: не-плиты сверить с nomenclature_guid, плиты записать в prays_plity."""
     file_bytes = await read_upload_file_capped(file)
     kind = _first_nonempty(product_kind_form, product_kind)
     try:
@@ -88,6 +107,134 @@ def list_guid_tasks(
         return service.list_tasks()
     except Exception as exc:
         raise_unexpected_server_error(exc, where="nomenclature.list_guid_tasks")
+
+
+@router.get("/guid-explain", response_model=GuidExplainResponse)
+def explain_guid(
+    product_kind: str = Query(..., min_length=1),
+    mark: str = Query(..., min_length=1),
+    _user: dict = Depends(REQUIRE_PRICES),
+    service: GuidExplainService = Depends(get_guid_explain_service),
+) -> GuidExplainResponse:
+    """Почему нет GUID у марки: та же карточка и срез своего вида (экономист)."""
+    try:
+        return service.explain(product_kind, mark, role=ROLE_ECONOMIST)
+    except GuidExplainError as exc:
+        raise_unprocessable_client_error(
+            exc, where="nomenclature.explain_guid", detail=str(exc)
+        )
+    except Exception as exc:
+        raise_unexpected_server_error(exc, where="nomenclature.explain_guid")
+
+
+@router.get("/guid-search", response_model=GuidSearchResponse)
+def search_guid(
+    product_kind: str = Query(..., min_length=1),
+    q: str = Query(default=""),
+    _user: dict = Depends(REQUIRE_PRICES),
+    service: GuidExplainService = Depends(get_guid_explain_service),
+) -> GuidSearchResponse:
+    """Поиск марки своего вида в справочнике и прайсе (экономист)."""
+    try:
+        return service.search(product_kind, q, role=ROLE_ECONOMIST)
+    except GuidExplainError as exc:
+        raise_unprocessable_client_error(
+            exc, where="nomenclature.search_guid", detail=str(exc)
+        )
+    except Exception as exc:
+        raise_unexpected_server_error(exc, where="nomenclature.search_guid")
+
+
+def _money(view) -> GuidReplaceMoneyOut:
+    return GuidReplaceMoneyOut(
+        unit_price=view.unit_price,
+        unit_discounted=view.unit_discounted,
+        line_sum=view.line_sum,
+        total=view.total,
+        subtotal=view.subtotal,
+        vat_amount=view.vat_amount,
+    )
+
+
+def _preview_out(result) -> GuidReplacePreviewResponse:
+    return GuidReplacePreviewResponse(
+        items=[
+            GuidReplacePreviewItemOut(
+                kp_id=item.kp_id,
+                qty=item.preview.qty,
+                was=_money(item.preview.was),
+                will=_money(item.preview.will),
+                delivery_was=item.preview.delivery_was,
+                delivery_will=item.preview.delivery_will,
+                oneoff_notice=item.preview.oneoff_notice,
+            )
+            for item in result.items
+        ],
+        skipped=[
+            GuidReplaceSkipOut(kp_id=item.kp_id, reason=item.reason) for item in result.skipped
+        ],
+    )
+
+
+def _replace_out(result) -> GuidReplaceResponse:
+    return GuidReplaceResponse(
+        written=[
+            GuidReplaceWrittenOut(kp_id=item.kp_id, total=item.total) for item in result.written
+        ],
+        skipped=[
+            GuidReplaceSkipOut(kp_id=item.kp_id, reason=item.reason) for item in result.skipped
+        ],
+        queue_notice=result.queue_notice,
+    )
+
+
+@router.post("/guid-replace/preview", response_model=GuidReplacePreviewResponse)
+def preview_guid_replace(
+    payload: GuidReplaceRequest,
+    _user: dict = Depends(REQUIRE_PRICES),
+    service: GuidReplaceService = Depends(get_guid_replace_service),
+) -> GuidReplacePreviewResponse:
+    """Окно «было / станет» по КП строки очереди. Ничего не записывает."""
+    try:
+        result = service.preview_in_queue(
+            product_kind=payload.product_kind,
+            mark=payload.mark,
+            target_mark=payload.target_mark,
+            nomenclature_id=payload.nomenclature_id,
+            replace_oneoff=payload.replace_oneoff,
+        )
+    except GuidReplaceError as exc:
+        raise_bad_request_client_error(
+            exc, where="nomenclature.preview_guid_replace", detail=exc.detail
+        )
+    except Exception as exc:
+        raise_unexpected_server_error(exc, where="nomenclature.preview_guid_replace")
+    return _preview_out(result)
+
+
+@router.post("/guid-replace", response_model=GuidReplaceResponse)
+def replace_guid(
+    payload: GuidReplaceRequest,
+    user: dict = Depends(REQUIRE_PRICES),
+    service: GuidReplaceService = Depends(get_guid_replace_service),
+) -> GuidReplaceResponse:
+    """Заменить марку во всех КП «в архиве» открытой строки очереди."""
+    try:
+        result = service.replace_in_queue(
+            product_kind=payload.product_kind,
+            mark=payload.mark,
+            target_mark=payload.target_mark,
+            nomenclature_id=payload.nomenclature_id,
+            changed_by=str(user.get("username") or "").strip() or None,
+            replace_oneoff=payload.replace_oneoff,
+        )
+    except GuidReplaceError as exc:
+        raise_bad_request_client_error(
+            exc, where="nomenclature.replace_guid", detail=exc.detail
+        )
+    except Exception as exc:
+        raise_unexpected_server_error(exc, where="nomenclature.replace_guid")
+    return _replace_out(result)
 
 
 @router.get("/duplicates", response_model=GuidTasksResponse)

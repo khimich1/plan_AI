@@ -15,6 +15,7 @@ from app.schemas.nomenclature import (
     PriceQueueResolveResponse,
     PriceTaskOut,
 )
+from app.services.guid_queue_sync import sync_guid_queue_with_kp
 from core.duplicate_candidates import clear_candidates, list_candidates
 from core.guid_demand import FIELD_DUPLICATE, list_open, sweep_guid_demand
 from core.guid_queue import DuplicateTask, collect_guid_queue
@@ -34,10 +35,16 @@ class NomenclatureQueueError(ValueError):
 
 
 class NomenclatureQueueService:
-    def __init__(self, db_path: Path | str | None = None) -> None:
+    def __init__(
+        self,
+        db_path: Path | str | None = None,
+        plita_db_path: Path | str | None = None,
+    ) -> None:
         self._db_path = Path(db_path) if db_path is not None else None
+        self._plita_db_path = Path(plita_db_path) if plita_db_path is not None else None
 
     def list_tasks(self) -> GuidTasksResponse:
+        self._sync_with_kp()
         conn = sqlite3.connect(str(self._pb_path()))
         try:
             snap = collect_guid_queue(conn)
@@ -196,6 +203,15 @@ class NomenclatureQueueService:
             chosen_guid=guid,
             match_status="manual",
         )
+
+    def _sync_with_kp(self) -> None:
+        """Страховка: очередь следует за КП. Свою pb.db без plita.db не сверяем."""
+        plita = self._plita_db_path
+        if plita is None:
+            if self._db_path is not None:
+                return
+            plita = Path(get_settings().plita_db_path)
+        sync_guid_queue_with_kp(self._pb_path(), plita)
 
     def _pb_path(self) -> Path:
         if self._db_path is not None:

@@ -945,3 +945,261 @@ def test_update_rejects_when_incoming_line_missing_line_id(db_path: str) -> None
     assert int(plates_after[0]["id"]) == plate_db_id
     assert plates_after[0]["line_id"] == "ln_has_id"
     assert len(_rows(db_path, "kp_piles", kp_id)) == 0
+
+
+def test_external_conn_writes_two_kps_on_one_commit(db_path: str) -> None:
+    """NG-205: two archived KPs share one connection and become visible together."""
+    from core.kp_db_common import _connect
+
+    kp_a = KpPersistenceService.save_kp_to_db(
+        "12.08.2026",
+        [_plate_line(line_id="ln_a", name="OLD-A", qty=1)],
+        customer_name="Client A",
+        product_type="plates",
+        status="в архиве",
+        db_path=db_path,
+    )
+    kp_b = KpPersistenceService.save_kp_to_db(
+        "12.08.2026",
+        [_plate_line(line_id="ln_b", name="OLD-B", qty=1)],
+        customer_name="Client B",
+        product_type="plates",
+        status="на согласовании",
+        db_path=db_path,
+    )
+
+    conn = _connect(db_path)
+    try:
+        KpPersistenceService.update_kp_from_order_data(
+            kp_a,
+            [_plate_line(line_id="ln_a", name="NEW-A", qty=3)],
+            db_path=db_path,
+            _external_conn=conn,
+        )
+        KpPersistenceService.update_kp_from_order_data(
+            kp_b,
+            [_plate_line(line_id="ln_b", name="NEW-B", qty=4)],
+            db_path=db_path,
+            _external_conn=conn,
+        )
+        assert _rows(db_path, "kp_plates", kp_a)[0]["plate_name"] == "OLD-A"
+        assert _rows(db_path, "kp_plates", kp_b)[0]["plate_name"] == "OLD-B"
+        conn.commit()
+    finally:
+        conn.close()
+
+    assert _rows(db_path, "kp_plates", kp_a)[0]["plate_name"] == "NEW-A"
+    assert int(_rows(db_path, "kp_plates", kp_a)[0]["qty"]) == 3
+    assert _rows(db_path, "kp_plates", kp_b)[0]["plate_name"] == "NEW-B"
+    assert int(_rows(db_path, "kp_plates", kp_b)[0]["qty"]) == 4
+    assert _kp_status(db_path, kp_a) == "в архиве"
+    assert _kp_status(db_path, kp_b) == "на согласовании"
+
+
+def test_external_conn_error_on_second_kp_does_not_rollback_caller(
+    db_path: str,
+) -> None:
+    """NG-205: failure re-raises; the caller's uncommitted work stays until they roll back."""
+    from core.kp_db_common import _connect
+
+    kp_a = KpPersistenceService.save_kp_to_db(
+        "12.08.2026",
+        [_plate_line(line_id="ln_a", name="OLD-A", qty=1)],
+        customer_name="Client A",
+        product_type="plates",
+        status="в архиве",
+        db_path=db_path,
+    )
+    kp_b = KpPersistenceService.save_kp_to_db(
+        "12.08.2026",
+        [_plate_line(line_id="ln_b", name="OLD-B", qty=1)],
+        customer_name="Client B",
+        product_type="plates",
+        status="в работе",
+        db_path=db_path,
+    )
+
+    conn = _connect(db_path)
+    try:
+        conn.execute(
+            "UPDATE KP_offers SET customer_name = ? WHERE kp_id = ?",
+            ("MARKER", kp_a),
+        )
+        KpPersistenceService.update_kp_from_order_data(
+            kp_a,
+            [_plate_line(line_id="ln_a", name="NEW-A", qty=9)],
+            db_path=db_path,
+            _external_conn=conn,
+        )
+        with pytest.raises(ValueError, match="в архиве"):
+            KpPersistenceService.update_kp_from_order_data(
+                kp_b,
+                [_plate_line(line_id="ln_b", name="NEW-B", qty=9)],
+                db_path=db_path,
+                _external_conn=conn,
+            )
+        still = conn.execute(
+            "SELECT customer_name FROM KP_offers WHERE kp_id = ?",
+            (kp_a,),
+        ).fetchone()
+        assert still is not None
+        assert still[0] == "MARKER"
+        renamed = conn.execute(
+            "SELECT plate_name, qty FROM kp_plates WHERE kp_id = ?",
+            (kp_a,),
+        ).fetchone()
+        assert renamed == ("NEW-A", 9)
+        conn.rollback()
+    finally:
+        conn.close()
+
+    assert _rows(db_path, "kp_plates", kp_a)[0]["plate_name"] == "OLD-A"
+    assert int(_rows(db_path, "kp_plates", kp_a)[0]["qty"]) == 1
+    assert _rows(db_path, "kp_plates", kp_b)[0]["plate_name"] == "OLD-B"
+    with sqlite3.connect(db_path) as check:
+        name = check.execute(
+            "SELECT customer_name FROM KP_offers WHERE kp_id = ?",
+            (kp_a,),
+        ).fetchone()
+    assert name is not None
+    assert name[0] == "Client A"
+
+
+def _history(db_path: str, kp_id: int) -> list[sqlite3.Row]:
+    with sqlite3.connect(db_path) as conn:
+        conn.row_factory = sqlite3.Row
+        return list(
+            conn.execute(
+                """
+                SELECT line_id, product_kind, mark_old, mark_new,
+                       unit_price_old, unit_price_new, changed_by, changed_at, source
+                FROM kp_mark_history
+                WHERE kp_id = ?
+                ORDER BY id
+                """,
+                (kp_id,),
+            )
+        )
+
+
+def test_mark_change_on_save_writes_history(db_path: str) -> None:
+    """NG-201: a matching line_id with a new plate name leaves was/became, prices, who, when."""
+    kp_id = KpPersistenceService.save_kp_to_db(
+        "12.08.2026",
+        [_plate_line(line_id="ln_a", name="Плиты ПБ 51-12-12п", unit_price=1000.0, qty=1)],
+        customer_name="History",
+        product_type="plates",
+        status="в архиве",
+        db_path=db_path,
+    )
+
+    KpPersistenceService.update_kp_from_order_data(
+        kp_id,
+        [_plate_line(line_id="ln_a", name="Плиты ПБ 51-12-12,5п", unit_price=1500.0, qty=2)],
+        db_path=db_path,
+        changed_by="экономист",
+        history_source="edit",
+    )
+
+    rows = _history(db_path, kp_id)
+    assert len(rows) == 1
+    row = rows[0]
+    assert row["line_id"] == "ln_a"
+    assert row["product_kind"] == "plates"
+    assert row["mark_old"] == "Плиты ПБ 51-12-12п"
+    assert row["mark_new"] == "Плиты ПБ 51-12-12,5п"
+    assert float(row["unit_price_old"]) == pytest.approx(1000.0)
+    assert float(row["unit_price_new"]) == pytest.approx(1500.0)
+    assert row["changed_by"] == "экономист"
+    assert row["source"] == "edit"
+    assert str(row["changed_at"]).strip()
+
+
+def test_qty_or_price_change_without_mark_writes_no_history(db_path: str) -> None:
+    """NG-201: quantity and unit price alone are not a mark change."""
+    kp_id = KpPersistenceService.save_kp_to_db(
+        "12.08.2026",
+        [_plate_line(line_id="ln_a", name="ПБ 60-12-8п", unit_price=1000.0, qty=1)],
+        customer_name="No History",
+        product_type="plates",
+        status="в архиве",
+        db_path=db_path,
+    )
+    KpPersistenceService.update_kp_from_order_data(
+        kp_id,
+        [_plate_line(line_id="ln_a", name="ПБ 60-12-8п", unit_price=1800.0, qty=9)],
+        db_path=db_path,
+    )
+    assert _history(db_path, kp_id) == []
+
+
+def test_mark_history_rolls_back_with_the_kp(db_path: str) -> None:
+    """NG-201: history is in the same transaction as the KP write."""
+    from core.kp_db_common import _connect
+
+    kp_id = KpPersistenceService.save_kp_to_db(
+        "12.08.2026",
+        [_pile_line(line_id="ln_p", mark="C14-40T4", unit_price=100.0)],
+        customer_name="Rollback History",
+        product_type="piles",
+        status="в архиве",
+        db_path=db_path,
+    )
+    conn = _connect(db_path)
+    try:
+        KpPersistenceService.update_kp_from_order_data(
+            kp_id,
+            [_pile_line(line_id="ln_p", mark="С14-40T4", unit_price=200.0)],
+            db_path=db_path,
+            _external_conn=conn,
+            changed_by="эконом",
+            history_source="replace_economist",
+        )
+        conn.rollback()
+    finally:
+        conn.close()
+
+    assert _rows(db_path, "kp_piles", kp_id)[0]["mark"] == "C14-40T4"
+    assert _history(db_path, kp_id) == []
+
+
+def test_replace_source_and_null_changed_by(db_path: str) -> None:
+    """NG-201: source is stored; missing actor is NULL and does not fail the save."""
+    kp_id = KpPersistenceService.save_kp_to_db(
+        "12.08.2026",
+        [_pile_line(line_id="ln_p", mark="C14-40T4", unit_price=100.0)],
+        customer_name="Source",
+        product_type="piles",
+        status="в архиве",
+        db_path=db_path,
+    )
+    KpPersistenceService.update_kp_from_order_data(
+        kp_id,
+        [_pile_line(line_id="ln_p", mark="С14-40T4", unit_price=110.0)],
+        db_path=db_path,
+        history_source="replace_economist",
+    )
+    rows = _history(db_path, kp_id)
+    assert len(rows) == 1
+    assert rows[0]["source"] == "replace_economist"
+    assert rows[0]["changed_by"] is None
+    assert rows[0]["mark_old"] == "C14-40T4"
+    assert rows[0]["mark_new"] == "С14-40T4"
+    assert rows[0]["product_kind"] == "piles"
+
+
+def test_init_schema_adds_mark_history_to_existing_database(tmp_path: Path) -> None:
+    """NG-201: additive migration — dropping the table and re-init brings it back."""
+    from core.kp_db_schema import _init_schema_impl
+
+    path = str(tmp_path / "legacy.db")
+    init_schema(path)
+    with sqlite3.connect(path) as conn:
+        conn.execute("DROP TABLE kp_mark_history")
+        conn.commit()
+    _init_schema_impl(path)
+    with sqlite3.connect(path) as conn:
+        found = conn.execute(
+            "SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'kp_mark_history'"
+        ).fetchone()
+    assert found is not None

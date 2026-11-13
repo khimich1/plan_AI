@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
-from typing import Any, Dict, List, Optional
+import sqlite3
+from datetime import datetime
+from typing import Any, Dict, List, NamedTuple, Optional
 
 from core.domain.enums import KpStatus, PlateStatus
 from core.kp_db_common import DEFAULT_DB, _connect
@@ -42,6 +44,20 @@ _LINE_TABLE_BY_TYPE = {
     "composite_piles": "kp_composite_piles",
     "fbs": "kp_fbs",
 }
+
+class _ExistingLine(NamedTuple):
+    line_type: str
+    row_id: int
+    mark: str
+    unit_price: float | None
+
+
+def _mark_text(item: dict[str, Any], line_type: str) -> str:
+    """Plate rows store the mark in ``name``; every other kind stores ``mark``."""
+    if line_type == "plates":
+        return str(item.get("name") or "").strip()
+    return str(item.get("mark") or item.get("name") or "").strip()
+
 
 _STATUS_IN_WORK = KpStatus.IN_WORK.value
 _STATUS_ARCHIVED = KpStatus.ARCHIVED.value
@@ -345,6 +361,9 @@ class KpPersistenceService:
         fbs_lm_delivery_enabled: bool | None = None,
         long_pile_delivery_enabled: bool | None = None,
         long_pile_delivery: Any = None,
+        _external_conn: Optional[sqlite3.Connection] = None,
+        changed_by: Optional[str] = None,
+        history_source: str = "edit",
     ) -> int:
         """Sync existing KP lines by ``line_id`` (append/update; same ``kp_id``).
 
@@ -353,8 +372,11 @@ class KpPersistenceService:
         (preserves ``kp_plates.id`` and production fields); new ids INSERT;
         missing ids DELETE (plates «в плане» / «в производстве» or with
         ``plan_id`` are blocked). Does not change ``kp_meta.status``.
+
+        ``_external_conn``: caller owns the transaction (no commit/rollback/close).
         """
-        conn = _connect(db_path)
+        own_conn = _external_conn is None
+        conn = _connect(db_path) if own_conn else _external_conn
         try:
             conn.execute("PRAGMA foreign_keys = ON")
             cur = conn.cursor()
@@ -526,7 +548,19 @@ class KpPersistenceService:
                 incoming_line_ids.add(line_id)
                 existing = existing_by_line.get(line_id)
                 if existing is not None:
-                    existing_type, row_id = existing
+                    existing_type, row_id = existing.line_type, existing.row_id
+                    KpPersistenceService._record_mark_change(
+                        cur,
+                        kp_id=kp_id,
+                        line_id=line_id,
+                        product_kind=line_type,
+                        mark_old=existing.mark,
+                        mark_new=_mark_text(item, line_type),
+                        unit_price_old=existing.unit_price,
+                        unit_price_new=float(item.get("unit_price", 0.0) or 0.0),
+                        changed_by=changed_by,
+                        source=history_source,
+                    )
                     if existing_type != line_type:
                         # Type change: delete old row, insert as new type.
                         KpPersistenceService._delete_line_row(
@@ -562,13 +596,13 @@ class KpPersistenceService:
                         discount_percent=resolved_discount,
                     )
 
-            for line_id, (existing_type, row_id) in existing_by_line.items():
+            for line_id, existing in existing_by_line.items():
                 if line_id in incoming_line_ids:
                     continue
                 KpPersistenceService._delete_line_row(
                     cur,
-                    line_type=existing_type,
-                    row_id=row_id,
+                    line_type=existing.line_type,
+                    row_id=existing.row_id,
                     protect_planned_plates=True,
                 )
 
@@ -652,31 +686,78 @@ class KpPersistenceService:
                             (kp_id, xlsx_blob, str(resolved_xlsx)),
                         )
 
-            conn.commit()
+            if own_conn:
+                conn.commit()
             return kp_id
         except Exception:
-            conn.rollback()
+            if own_conn:
+                conn.rollback()
             raise
         finally:
-            conn.close()
+            if own_conn:
+                conn.close()
 
     @staticmethod
     def _load_existing_lines_by_line_id(
         cur: Any, kp_id: int
-    ) -> dict[str, tuple[str, int]]:
-        """Map ``line_id`` → ``(product_type, row_id)`` across all kp_* tables."""
-        result: dict[str, tuple[str, int]] = {}
+    ) -> dict[str, _ExistingLine]:
+        """Map ``line_id`` → existing row (type, id, mark, unit price)."""
+        result: dict[str, _ExistingLine] = {}
         for line_type, table in _LINE_TABLE_BY_TYPE.items():
+            mark_col = "plate_name" if line_type == "plates" else "mark"
             cur.execute(
-                f"SELECT id, line_id FROM {table} WHERE kp_id = ?",
+                f"SELECT id, line_id, {mark_col}, unit_price FROM {table} WHERE kp_id = ?",
                 (kp_id,),
             )
-            for row_id, line_id in cur.fetchall():
+            for row_id, line_id, mark, unit_price in cur.fetchall():
                 text = str(line_id).strip() if line_id is not None else ""
                 if not text:
                     continue
-                result[text] = (line_type, int(row_id))
+                price = None if unit_price is None else float(unit_price)
+                result[text] = _ExistingLine(
+                    line_type, int(row_id), str(mark or "").strip(), price
+                )
         return result
+
+    @staticmethod
+    def _record_mark_change(
+        cur: Any,
+        *,
+        kp_id: int,
+        line_id: str,
+        product_kind: str,
+        mark_old: str,
+        mark_new: str,
+        unit_price_old: float | None,
+        unit_price_new: float | None,
+        changed_by: str | None,
+        source: str,
+    ) -> None:
+        """Write one history row when the mark/name of a matched line changed."""
+        if mark_old == mark_new:
+            return
+        actor = (changed_by or "").strip() or None
+        src = (source or "").strip() or "edit"
+        cur.execute(
+            """
+            INSERT INTO kp_mark_history (
+                kp_id, line_id, product_kind, mark_old, mark_new,
+                unit_price_old, unit_price_new, changed_by, changed_at, source
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                kp_id,
+                line_id,
+                product_kind,
+                mark_old,
+                mark_new,
+                unit_price_old,
+                unit_price_new,
+                actor,
+                datetime.now().isoformat(timespec="seconds"),
+                src,
+            ),
+        )
 
     @staticmethod
     def _delete_line_row(

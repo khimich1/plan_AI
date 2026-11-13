@@ -33,6 +33,8 @@ from app.services.gsm_registry_service import GsmRegistryService
 from app.services.gsm_reset_service import GsmResetService
 from app.services.gsm_transaction_service import GsmTransactionService
 from app.services.nomenclature_import_service import NomenclatureImportService
+from app.services.guid_explain_service import GuidExplainService
+from app.services.guid_replace_service import GuidReplaceService
 from app.services.nomenclature_queue_service import NomenclatureQueueService
 from app.services.offers_service import OffersService
 from app.services.pile_cost_service import PileCostService
@@ -128,6 +130,15 @@ def get_nomenclature_import_service() -> NomenclatureImportService:
 
 def get_nomenclature_queue_service() -> NomenclatureQueueService:
     return NomenclatureQueueService()
+
+
+def get_guid_explain_service() -> GuidExplainService:
+    return GuidExplainService()
+
+
+def get_guid_replace_service() -> GuidReplaceService:
+    settings = get_settings()
+    return GuidReplaceService(str(settings.plita_db_path), str(settings.pb_db_path))
 
 
 def get_price_desk_service() -> PriceDeskService:

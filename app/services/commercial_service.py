@@ -23,7 +23,7 @@ from core.domain.plate_order import normalize_load_code
 from core.optimization.layout_runtime_snapshot import _make_get_load_code_for_plate
 from core.project_paths import PRICE_XLSX_PATH
 from core.plate_order_context import PlateOrderContext
-from core.kp_db_nomenclature import enrich_order_data_with_nomenclature
+from core.kp_db_nomenclature import enrich_order_data_with_nomenclature, load_class_from_plate_name
 from core.kp_plate_weight import resolve_kp_line_weight_kg
 from core.ports.visualization import (
     build_component_breakdown,
@@ -188,9 +188,12 @@ class CommercialService:
             cache_value = cache_by_key.get(cache_key) or cache_by_key.get(
                 (round(length_m, 3), round(width_m, 3), float(load_code), item_ldr)
             )
+            load_class = (normalize_load_code(load_code) or 8) * 100
             if cache_value:
                 if cache_value.get("canonical_name"):
                     name = cache_value["canonical_name"]
+                    # D-name125: нагрузка строки — у выбранной карточки (12,5 → 1250)
+                    load_class = load_class_from_plate_name(name) or load_class
                 nomenclature_id = cache_value.get("nomenclature_id")
             else:
                 nomenclature_id = None
@@ -208,7 +211,7 @@ class CommercialService:
                 "length_dm_raw": length_dm_raw or item_ldr,
                 "width_m": width_m,
                 "qty": qty,
-                "load_class": (normalize_load_code(load_code) or 8) * 100,
+                "load_class": load_class,
                 "unit_price": unit_price,
                 "weight": total_weight_kg,
             }

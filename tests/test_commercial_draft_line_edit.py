@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
 from typing import Any
 
@@ -380,3 +381,236 @@ def test_restore_after_replace_uses_replace_line_ids(
     assert restored_ids[0] == target_id
     for nid in new_ids:
         assert nid not in restored_ids
+
+
+_OLD_2280 = "Плиты ПБ 22,80-12-8п"
+_NEW_228 = "Плиты ПБ 22,8-12-8п"
+_OLD_WIDTH = "Плиты ПБ 29-5,25-8п"
+_NEW_WIDTH = "Плиты ПБ 29-5,3-8п"
+
+
+def _draft_file(draft_id: str) -> Path:
+    from app.core.settings import get_settings
+
+    return Path(get_settings().drafts_dir) / f"{draft_id}.json"
+
+
+def _retarget_plates(draft_id: str, name: str, *, oneoff: bool = False) -> list[int]:
+    path = _draft_file(draft_id)
+    data = json.loads(path.read_text(encoding="utf-8"))
+    qtys: list[int] = []
+    for index, line in enumerate(data["order_data"]):
+        if str(line.get("product_type") or "plates") != "plates":
+            continue
+        qty = 2 if index == 0 else 4
+        line["name"] = name
+        line["source_text"] = f"{name} старый текст"
+        line["qty"] = qty
+        line["concrete_grade"] = "М500"
+        if oneoff:
+            line["price_source"] = "oneoff"
+        qtys.append(qty)
+    path.write_text(json.dumps(data, ensure_ascii=False), encoding="utf-8")
+    return qtys
+
+
+def _seed_one_plate_card(name: str, guid: str, *, duplicate: bool = False) -> None:
+    import sqlite3
+
+    from app.core.settings import get_settings
+    from core.config_and_data import parse_name_to_sizes
+    from core.kp_db_nomenclature import load_class_from_plate_name
+    from core.price_db import length_m_to_price_length_dm
+
+    pb = str(get_settings().pb_db_path)
+    length_m, _width = parse_name_to_sizes(name)
+    load_class = load_class_from_plate_name(name)
+    assert length_m is not None and load_class is not None
+    with sqlite3.connect(pb) as conn:
+        conn.execute(
+            "INSERT OR REPLACE INTO prices (length_dm, load_code, price) VALUES (?, ?, 10000)",
+            (length_m_to_price_length_dm(length_m), load_class // 100),
+        )
+        conn.execute(
+            'INSERT INTO prays_plity ("Уникальный идентификатор (Номенклатура)", "Товар") '
+            "VALUES (?, ?)",
+            (guid, name),
+        )
+        if duplicate:
+            conn.execute(
+                'INSERT INTO prays_plity ("Уникальный идентификатор (Номенклатура)", "Товар") '
+                "VALUES (?, ?)",
+                (guid + "-b", name),
+            )
+
+
+def test_manager_replaces_every_line_and_does_not_touch_the_queue(
+    mixed_client: TestClient,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """NG-301: 22,80 → 22,8 во всех строках, скидка черновика, очередь молчит."""
+    import app.services.guid_queue_sync as queue_sync
+    from app.services.commercial_workflow_service import CommercialWorkflowService
+    from app.services.promise_service import PromiseService
+
+    def fail_queue(*_args: object, **_kwargs: object) -> None:
+        raise AssertionError("очередь")
+
+    def fail_promise(*_args: object, **_kwargs: object) -> None:
+        raise AssertionError("обещание")
+
+    monkeypatch.setattr(queue_sync, "sync_guid_queue_with_kp", fail_queue)
+    monkeypatch.setattr(PromiseService, "recalc_on_composition_change", fail_promise)
+    draft_id, _plates = _create_plates_result_draft(mixed_client, monkeypatch)
+    qtys = _retarget_plates(draft_id, _OLD_2280)
+    _seed_one_plate_card(_NEW_228, "guid-228")
+    before = json.loads(_draft_file(draft_id).read_text(encoding="utf-8"))
+    assert int(before["metadata"].get("breakdown_tables_count") or 0) > 0
+
+    body = CommercialWorkflowService().replace_guid_mark(
+        draft_id,
+        product_kind="plate",
+        mark=_OLD_2280,
+        target_mark=_NEW_228,
+    )
+
+    lines = [line for line in body["order_data"] if line.get("name") == _NEW_228]
+    assert len(lines) == len(qtys)
+    assert [int(line["qty"]) for line in lines] == qtys
+    assert all(line["source_text"] == _NEW_228 for line in lines)
+    assert all(line["nomenclature_id"] == "guid-228" for line in lines)
+    assert all(int(line["load_class"]) == 800 for line in lines)
+    assert all(float(line["unit_price"]) == pytest.approx(10000) for line in lines)
+    assert all(float(line["discounted_price"]) == pytest.approx(9400) for line in lines)
+    assert body["metadata"].get("breakdown_tables_count") == 0
+    from core.guid_gate import OrderLine, check_invoice_guids
+    import sqlite3
+    from app.core.settings import get_settings
+
+    conn = sqlite3.connect(str(get_settings().pb_db_path))
+    try:
+        report = check_invoice_guids([OrderLine("plate", _NEW_228)], conn)
+    finally:
+        conn.close()
+    assert not report.missing
+
+
+def test_manager_replace_rewrites_width_weight_and_refuses_bad_targets(
+    mixed_client: TestClient,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from app.services.commercial_workflow_service import CommercialWorkflowService
+    from core.guid_replace import GuidReplaceError
+    from core.kp_plate_weight import resolve_kp_line_weight_kg
+
+    draft_id, _plates = _create_plates_result_draft(mixed_client, monkeypatch)
+    _retarget_plates(draft_id, _OLD_WIDTH)
+    _seed_one_plate_card(_NEW_WIDTH, "guid-53")
+    body = CommercialWorkflowService().replace_guid_mark(
+        draft_id,
+        product_kind="plate",
+        mark=_OLD_WIDTH,
+        target_mark=_NEW_WIDTH,
+    )
+    line = next(item for item in body["order_data"] if item["name"] == _NEW_WIDTH)
+    _unit, weight = resolve_kp_line_weight_kg(
+        {"length_m": line["length_m"], "width_m": 0.53, "qty": line["qty"]}
+    )
+    assert float(line["width_m"]) == pytest.approx(0.53)
+    assert float(line["weight"]) == pytest.approx(weight)
+    assert line["nomenclature_id"] == "guid-53"
+
+    blocked = _create_plates_result_draft(mixed_client, monkeypatch)[0]
+    _retarget_plates(blocked, _OLD_2280)
+    _seed_one_plate_card(_NEW_228, "guid-two", duplicate=True)
+    with pytest.raises(GuidReplaceError, match="одним номером"):
+        CommercialWorkflowService().replace_guid_mark(
+            blocked,
+            product_kind="plate",
+            mark=_OLD_2280,
+            target_mark=_NEW_228,
+        )
+
+    oneoff = _create_plates_result_draft(mixed_client, monkeypatch)[0]
+    _retarget_plates(oneoff, _OLD_2280, oneoff=True)
+    with pytest.raises(GuidReplaceError, match="(?i)договорн"):
+        CommercialWorkflowService().replace_guid_mark(
+            oneoff,
+            product_kind="plate",
+            mark=_OLD_2280,
+            target_mark=_NEW_228,
+        )
+    stored = json.loads(_draft_file(oneoff).read_text(encoding="utf-8"))
+    assert stored["order_data"][0]["name"] == _OLD_2280
+
+
+def test_draft_guid_replace_api_previews_without_writing_and_hides_foreign_drafts(
+    mixed_client: TestClient,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from app.security.session import create_session_token
+    from tests.helpers.auth_fixtures import patch_auth_users
+
+    draft_id, _plates = _create_plates_result_draft(mixed_client, monkeypatch)
+    _retarget_plates(draft_id, _OLD_2280)
+    _seed_one_plate_card(_NEW_228, "guid-api")
+    body = {
+        "product_kind": "plate",
+        "mark": _OLD_2280,
+        "target_mark": _NEW_228,
+    }
+    preview = mixed_client.post(
+        f"/api/v1/commercial/drafts/{draft_id}/guid-replace/preview",
+        json=body,
+    )
+    assert preview.status_code == 200, preview.text
+    item = preview.json()["items"][0]
+    assert item["qty"] == 6
+    assert item["will"]["unit_discounted"] == pytest.approx(9400)
+    stored = json.loads(_draft_file(draft_id).read_text(encoding="utf-8"))
+    assert stored["order_data"][0]["name"] == _OLD_2280
+
+    written = mixed_client.post(
+        f"/api/v1/commercial/drafts/{draft_id}/guid-replace",
+        json=body,
+    )
+    assert written.status_code == 200, written.text
+    assert all(
+        line["name"] == _NEW_228
+        for line in written.json()["order_data"]
+        if str(line.get("product_type") or "plates") == "plates"
+    )
+
+    denied_id, _ = _create_plates_result_draft(mixed_client, monkeypatch)
+    _retarget_plates(denied_id, _OLD_2280)
+    _seed_one_plate_card(_NEW_228, "guid-dup", duplicate=True)
+    denied = mixed_client.post(
+        f"/api/v1/commercial/drafts/{denied_id}/guid-replace",
+        json=body,
+    )
+    assert denied.status_code == 400
+    assert "одним номером" in denied.text
+
+    patch_auth_users(
+        monkeypatch,
+        [
+            {
+                "id": 2,
+                "username": "other",
+                "role": "manager",
+                "manager_id": None,
+                "is_active": 1,
+                "created_at": "2026-01-01 00:00:00",
+            }
+        ],
+    )
+    token = create_session_token(
+        {"id": 2, "username": "other", "role": "manager"}, ttl_seconds=300
+    )
+    mixed_client.cookies.set("app_session", token)
+    foreign = mixed_client.post(
+        f"/api/v1/commercial/drafts/{draft_id}/guid-replace/preview",
+        json=body,
+    )
+    assert foreign.status_code == 403
+

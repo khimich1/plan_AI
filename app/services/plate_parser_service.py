@@ -211,7 +211,7 @@ class PlateParserService:
                 plate_name = make_plate_name(
                     length_m,
                     width_m,
-                    load_code=int(float(load_code)),
+                    load_code=load_code,
                     length_dm_raw=length_dm_raw,
                 )
                 canonical_name, nomenclature_id, _match_type = lookup_nomenclature_by_plate_name(plate_name, cursor)

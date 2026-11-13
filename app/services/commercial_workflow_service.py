@@ -227,6 +227,36 @@ class CommercialWorkflowService:
             unit_price_set=unit_price_set,
         )
 
+    def preview_guid_mark(
+        self,
+        draft_id: str,
+        *,
+        product_kind: str,
+        mark: str,
+        target_mark: str,
+    ) -> dict[str, Any]:
+        return self.draft_lifecycle.preview_guid_mark(
+            draft_id,
+            product_kind=product_kind,
+            mark=mark,
+            target_mark=target_mark,
+        )
+
+    def replace_guid_mark(
+        self,
+        draft_id: str,
+        *,
+        product_kind: str,
+        mark: str,
+        target_mark: str,
+    ) -> dict[str, Any]:
+        return self.draft_lifecycle.replace_guid_mark(
+            draft_id,
+            product_kind=product_kind,
+            mark=mark,
+            target_mark=target_mark,
+        )
+
     def restore_order_lines(
         self,
         draft_id: str,
@@ -746,6 +776,7 @@ class CommercialWorkflowService:
         status: str = "в работе",
         save_mode: str = "database",
         plate_order_ctx: PlateOrderContext | None = None,
+        changed_by: str | None = None,
     ) -> dict[str, Any]:
         return self.draft_lifecycle.save_offer(
             draft_id,
@@ -753,6 +784,7 @@ class CommercialWorkflowService:
             status=status,
             save_mode=save_mode,
             plate_order_ctx=plate_order_ctx,
+            changed_by=changed_by,
         )
 
     def save_draft(
@@ -762,12 +794,14 @@ class CommercialWorkflowService:
         mode: str,
         execution_terms_input: str = "",
         plate_order_ctx: PlateOrderContext | None = None,
+        changed_by: str | None = None,
     ) -> dict[str, Any]:
         return self.draft_lifecycle.save_draft(
             draft_id,
             mode=mode,
             execution_terms_input=execution_terms_input,
             plate_order_ctx=plate_order_ctx,
+            changed_by=changed_by,
         )
 
     def _load_draft_or_raise(self, draft_id: str) -> dict[str, Any]:

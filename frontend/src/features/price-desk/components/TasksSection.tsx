@@ -1,6 +1,8 @@
 import { useState } from "react";
 import { Alert } from "@/shared/ui/Alert";
 import { Button } from "@/shared/ui/Button";
+import { GuidExplainPanel } from "@/features/nomenclature/components/GuidExplainPanel";
+import { economistGuidExplainSource, useRefreshGuidTasks } from "@/features/nomenclature/hooks/useGuidExplainQueries";
 import {
   useGuidTasksQuery,
   useResolvePriceMutation,
@@ -8,15 +10,22 @@ import {
 import { formatKpIdsLabel, productKindLabel } from "@/features/nomenclature/types/nomenclature";
 import { getErrorMessage } from "@/shared/lib/apiError";
 
-export const TasksSection = () => {
+const canOpenImport = (productKind: string): boolean =>
+  productKind !== "plate" && productKind !== "plates";
+
+type TasksSectionProps = {
+  onOpenImport: () => void;
+};
+
+export const TasksSection = ({ onOpenImport }: TasksSectionProps) => {
   const tasksQuery = useGuidTasksQuery();
   const resolvePrice = useResolvePriceMutation();
+  const refreshTasks = useRefreshGuidTasks();
   const [priceDrafts, setPriceDrafts] = useState<Record<string, string>>({});
   const [localError, setLocalError] = useState<string | null>(null);
 
   const toCreate = tasksQuery.data?.to_create_1c ?? [];
   const toPrice = tasksQuery.data?.to_price ?? [];
-  const empty = toCreate.length === 0 && toPrice.length === 0;
 
   const submitPrice = async (guid: string) => {
     const raw = priceDrafts[guid] ?? "";
@@ -39,16 +48,16 @@ export const TasksSection = () => {
     }
   };
 
+  if (!tasksQuery.isError && !localError && toCreate.length === 0 && toPrice.length === 0) {
+    return null;
+  }
+
   return (
     <section aria-label="Задачи по изделиям" style={{ display: "grid", gap: "0.85rem" }}>
-      <h2 style={{ margin: 0, fontSize: "1.1rem" }}>Задачи по изделиям</h2>
       {tasksQuery.isError ? (
         <Alert tone="error">{getErrorMessage(tasksQuery.error)}</Alert>
       ) : null}
       {localError ? <Alert tone="error">{localError}</Alert> : null}
-      {empty && !tasksQuery.isLoading ? (
-        <p style={{ margin: 0, color: "#667085" }}>задач нет</p>
-      ) : null}
 
       {toCreate.length > 0 ? (
         <div>
@@ -57,9 +66,38 @@ export const TasksSection = () => {
             {toCreate.map((item) => {
               const kpLabel = formatKpIdsLabel(item.kp_ids);
               return (
-                <li key={`${item.product_kind}-${item.mark}-${item.field ?? "guid_1c"}`}>
-                  {productKindLabel(item.product_kind)} · {item.mark} — {item.hint}
-                  {kpLabel ? ` — ${kpLabel}` : ""}
+                <li
+                  key={`${item.product_kind}-${item.mark}-${item.field ?? "guid_1c"}`}
+                  style={{ display: "grid", gap: "0.35rem" }}
+                >
+                  <div
+                    style={{
+                      display: "flex",
+                      flexWrap: "wrap",
+                      gap: "0.5rem",
+                      alignItems: "center",
+                    }}
+                  >
+                    <span>
+                      {productKindLabel(item.product_kind)} · {item.mark} — {item.hint}
+                      {kpLabel ? ` — ${kpLabel}` : ""}
+                    </span>
+                    {canOpenImport(item.product_kind) ? (
+                      <Button
+                        type="button"
+                        aria-label={`Загрузить выгрузку 1С, ${item.mark}`}
+                        onClick={onOpenImport}
+                      >
+                        Загрузить выгрузку 1С
+                      </Button>
+                    ) : null}
+                  </div>
+                  <GuidExplainPanel
+                    source={economistGuidExplainSource}
+                    productKind={item.product_kind}
+                    mark={item.mark}
+                    onCommitted={refreshTasks}
+                  />
                 </li>
               );
             })}

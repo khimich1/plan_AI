@@ -9,7 +9,9 @@ from openpyxl import load_workbook
 
 from core.commercial_offer_xlsx import calculate_total_cost, generate_commercial_offer_xlsx
 from core.commercial_pricing import VAT_PER_LINE_FROM_KP_ID, vat_included_from_line_sums
-from core.embed_delivery_in_unit_price import embed_delivery_in_unit_prices
+from core.delivery_invoice_parity import delivery_invoice_lines
+from core.embed_delivery_in_unit_price import allocate_line_delivery_kopecks
+from core.invoice_export import _line_payable
 
 
 def _order() -> list[dict[str, Any]]:
@@ -67,22 +69,26 @@ def test_new_kp_xlsx_writes_numeric_vat_matching_totals() -> None:
     assert abs(float(value) - float(totals["vat_amount"])) < 0.001
 
 
-def test_new_embed_xlsx_vat_comes_from_embedded_line_sums() -> None:
+def test_new_embed_xlsx_vat_comes_from_parity_line_sums() -> None:
     order = _order()
     totals = calculate_total_cost(
         order, discount_percent=0, logistics_cost=500.0, kp_id=None
     )
-    embedded = embed_delivery_in_unit_prices(
+    shares = allocate_line_delivery_kopecks(
         qty_by_index=[2],
         product_type_by_index=["plates"],
-        unit_price_by_index=[1000.0],
-        discount_percent=0,
         plate_delivery_total=float(totals["plate_delivery_total"]),
-        pile_delivery_total=0.0,
     )
-    expected = float(
-        vat_included_from_line_sums([Decimal(str(line.line_sum)) for line in embedded.lines])
+    price = Decimal("1000")
+    target = _line_payable({"discount_percent": 0}, {"price": price, "qty": 2}, shares[0])
+    rows = delivery_invoice_lines(
+        prices=[price],
+        qty=[2],
+        target_payable=[target],
+        delivery_rub=[Decimal(shares[0]) / Decimal(100)],
     )
+    assert rows is not None
+    expected = float(vat_included_from_line_sums([row.payable for row in rows]))
     value = _vat_cell(_sheet(None, embed=True))
     assert isinstance(value, (int, float))
     assert abs(float(value) - expected) < 0.001

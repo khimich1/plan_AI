@@ -1,4 +1,5 @@
-import { useRef, useState, type DragEvent } from "react";
+import { useRef, useState, type CSSProperties, type DragEvent } from "react";
+import { Link, useSearchParams } from "react-router";
 import { Alert } from "@/shared/ui/Alert";
 import { Button } from "@/shared/ui/Button";
 import {
@@ -9,12 +10,32 @@ import {
 import type { PriceDeskPreview } from "@/features/price-desk/types/priceDesk";
 import { priceDeskKindLabel } from "@/features/price-desk/types/priceDesk";
 import { getErrorMessage } from "@/shared/lib/apiError";
+import {
+  pricesCostHref,
+  pricesQueueHref,
+  pricesScreenFromSearch,
+  pricesUpdateHref,
+} from "@/shared/lib/pricesScreen";
 import { Import1cDialog } from "@/features/nomenclature/components/Import1cDialog";
+import {
+  useGuidDuplicatesQuery,
+  useGuidTasksQuery,
+} from "@/features/nomenclature/hooks/useNomenclatureQueries";
 import { DuplicatesSection } from "@/features/price-desk/components/DuplicatesSection";
 import { PileCostPanel } from "@/features/price-desk/components/PileCostPanel";
 import { TasksSection } from "@/features/price-desk/components/TasksSection";
 
 const ACCEPT = ".xls,.xlsx,application/vnd.ms-excel,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet";
+
+const entryLinkStyle: CSSProperties = {
+  color: "#2b5cff",
+  fontWeight: 600,
+  fontSize: "0.95rem",
+  textDecoration: "underline",
+  textUnderlineOffset: "0.15em",
+};
+
+const viewTitleStyle: CSSProperties = { margin: 0, fontSize: "1.1rem" };
 
 const isExcelFile = (file: File): boolean => {
   const name = file.name.toLowerCase();
@@ -29,10 +50,14 @@ const formatPrice = (value: number | null | undefined): string => {
 };
 
 export const PricesView = () => {
+  const [searchParams] = useSearchParams();
+  const screen = pricesScreenFromSearch(searchParams);
   const inputRef = useRef<HTMLInputElement>(null);
   const statusQuery = usePriceDeskStatusQuery();
   const previewMutation = usePriceDeskPreviewMutation();
   const applyMutation = usePriceDeskApplyMutation();
+  const tasksQuery = useGuidTasksQuery();
+  const duplicatesQuery = useGuidDuplicatesQuery();
   const [dragOver, setDragOver] = useState(false);
   const [localError, setLocalError] = useState<string | null>(null);
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
@@ -44,6 +69,17 @@ export const PricesView = () => {
     localError ??
     (previewMutation.isError ? getErrorMessage(previewMutation.error) : null) ??
     (applyMutation.isError ? getErrorMessage(applyMutation.error) : null);
+
+  const tasksReady = !tasksQuery.isLoading && !tasksQuery.isError;
+  const duplicatesReady = !duplicatesQuery.isLoading && !duplicatesQuery.isError;
+  const queueEmpty =
+    tasksReady &&
+    duplicatesReady &&
+    (tasksQuery.data?.to_create_1c.length ?? 0) === 0 &&
+    (tasksQuery.data?.to_price.length ?? 0) === 0 &&
+    (duplicatesQuery.data?.duplicates.length ?? 0) === 0;
+
+  const openImport = () => setImport1cOpen(true);
 
   const resetPreview = () => {
     setLocalError(null);
@@ -103,156 +139,197 @@ export const PricesView = () => {
         <header>
           <h1 style={{ margin: 0, fontSize: "1.75rem" }}>Прайсы и 1С</h1>
           <p style={{ margin: "0.4rem 0 0", color: "#475467" }}>
-            Загрузка прайса завода, выгрузка 1С, задачи по изделиям и дубли GUID.
+            Сначала очередь «Ждут решения», а себестоимость и прайс завода — отдельные входы.
           </p>
         </header>
 
-        {statusQuery.isError && (
-          <Alert tone="error">{getErrorMessage(statusQuery.error)}</Alert>
-        )}
-
-        <section aria-label="Текущие прайсы">
-          <h2 style={{ margin: "0 0 0.75rem", fontSize: "1.1rem" }}>Сейчас в программе</h2>
-          <div style={{ overflowX: "auto" }}>
-            <table style={{ width: "100%", borderCollapse: "collapse", fontSize: "0.95rem" }}>
-              <thead>
-                <tr style={{ textAlign: "left", color: "#475467" }}>
-                  <th style={{ padding: "0.5rem 0.6rem", borderBottom: "1px solid #e4e7ec" }}>Группа</th>
-                  <th style={{ padding: "0.5rem 0.6rem", borderBottom: "1px solid #e4e7ec" }}>Дата прайса</th>
-                  <th style={{ padding: "0.5rem 0.6rem", borderBottom: "1px solid #e4e7ec" }}>Записано</th>
-                  <th style={{ padding: "0.5rem 0.6rem", borderBottom: "1px solid #e4e7ec" }}>Строк</th>
-                </tr>
-              </thead>
-              <tbody>
-                {(statusQuery.data?.groups ?? []).map((group) => (
-                  <tr key={group.product_kind}>
-                    <td style={{ padding: "0.55rem 0.6rem", borderBottom: "1px solid #f2f4f7" }}>
-                      {priceDeskKindLabel(group.product_kind)}
-                    </td>
-                    <td style={{ padding: "0.55rem 0.6rem", borderBottom: "1px solid #f2f4f7" }}>
-                      {group.price_list_date ?? "—"}
-                    </td>
-                    <td style={{ padding: "0.55rem 0.6rem", borderBottom: "1px solid #f2f4f7" }}>
-                      {group.imported_at ?? "—"}
-                    </td>
-                    <td style={{ padding: "0.55rem 0.6rem", borderBottom: "1px solid #f2f4f7" }}>
-                      {group.row_count}
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        </section>
-
-        <PileCostPanel />
-
-        <section aria-label="Загрузка прайса завода" style={{ display: "grid", gap: "0.85rem" }}>
-          <h2 style={{ margin: 0, fontSize: "1.1rem" }}>Загрузка прайса завода</h2>
-        <div
-          role="button"
-          tabIndex={0}
-          aria-label="Выбрать или перетащить файл Excel"
-          onClick={() => inputRef.current?.click()}
-          onKeyDown={(event) => {
-            if (event.key === "Enter" || event.key === " ") {
-              event.preventDefault();
-              inputRef.current?.click();
-            }
-          }}
-          onDragEnter={(event) => {
-            event.preventDefault();
-            setDragOver(true);
-          }}
-          onDragOver={(event) => {
-            event.preventDefault();
-            setDragOver(true);
-          }}
-          onDragLeave={(event) => {
-            event.preventDefault();
-            setDragOver(false);
-          }}
-          onDrop={onDrop}
-          style={{
-            border: `2px dashed ${dragOver ? "#2b5cff" : "#d0d5dd"}`,
-            borderRadius: 14,
-            padding: "1.75rem 1.25rem",
-            textAlign: "center",
-            background: dragOver ? "#eef2ff" : "#f8faff",
-            cursor: busy ? "wait" : "pointer",
-            color: "#344054",
-          }}
-        >
-          <div style={{ fontWeight: 600, marginBottom: "0.35rem" }}>
-            {previewMutation.isPending ? "Считаю дифф…" : "Перетащите .xls или .xlsx сюда"}
-          </div>
-          <div style={{ fontSize: "0.9rem", color: "#667085" }}>
-            или нажмите, чтобы выбрать файл
-            {selectedFile ? (
-              <>
-                <br />
-                Выбран: {selectedFile.name}
-              </>
+        {screen === "queue" ? (
+          <>
+            <h2 style={viewTitleStyle}>Ждут решения</h2>
+            <nav
+              aria-label="Другие входы"
+              style={{ display: "flex", flexWrap: "wrap", gap: "0.35rem 0.75rem", alignItems: "center" }}
+            >
+              <Link to={pricesCostHref()} style={entryLinkStyle}>
+                Себестоимость
+              </Link>
+              <span aria-hidden="true" style={{ color: "#98a2b3" }}>
+                ·
+              </span>
+              <Link to={pricesUpdateHref()} style={entryLinkStyle}>
+                Обновить цены
+              </Link>
+            </nav>
+            {queueEmpty ? (
+              <p role="status" style={{ margin: 0, color: "#667085" }}>
+                задач нет
+              </p>
             ) : null}
-          </div>
-          <input
-            ref={inputRef}
-            type="file"
-            accept={ACCEPT}
-            hidden
-            disabled={busy}
-            onChange={(event) => {
-              const file = event.target.files?.[0];
-              if (file) {
-                void runPreview(file);
-              }
-            }}
-          />
-        </div>
+            <TasksSection onOpenImport={openImport} />
+            <DuplicatesSection />
+            <section aria-label="Выгрузка из 1С" style={{ display: "grid", gap: "0.75rem" }}>
+              <h2 style={{ margin: 0, fontSize: "1.1rem" }}>Выгрузка из 1С</h2>
+              <p style={{ margin: 0, color: "#475467" }}>
+                Полный «Прайс-лист» (.xls) или универсальный отчёт с УИД (.xlsx). Выгрузка с отбором
+                работает в частичном режиме — позиции вне файла не считаем исчезнувшими.
+              </p>
+              <div>
+                <Button type="button" onClick={openImport}>
+                  Загрузить выгрузку 1С
+                </Button>
+              </div>
+              <Import1cDialog open={import1cOpen} onClose={() => setImport1cOpen(false)} />
+            </section>
+          </>
+        ) : null}
 
-        {errorText && <Alert tone="error">{errorText}</Alert>}
+        {screen === "cost" ? (
+          <>
+            <p style={{ margin: 0 }}>
+              <Link to={pricesQueueHref()} style={entryLinkStyle}>
+                Ждут решения
+              </Link>
+            </p>
+            <h2 style={viewTitleStyle}>Себестоимость</h2>
+            <PileCostPanel />
+          </>
+        ) : null}
 
-        {preview && (
-          <section aria-label="Дифф прайса" style={{ display: "grid", gap: "0.75rem" }}>
-            <Alert tone="info">
-              {priceDeskKindLabel(preview.product_kind)}
-              {preview.price_list_date ? ` · дата ${preview.price_list_date}` : ""}
-              {`: ${preview.parsed_rows} строк, изменено ${preview.changed}, новых ${preview.new}, пропало ${preview.missing}, без изменений ${preview.unchanged}.`}
-            </Alert>
-            <DiffBucket title="Изменились" items={preview.examples.changed} />
-            <DiffBucket title="Новые" items={preview.examples.new} />
-            <DiffBucket
-              title="Пропали из файла (останутся со старой ценой)"
-              items={preview.examples.missing}
-            />
-            <div style={{ display: "flex", justifyContent: "flex-end", gap: "0.5rem" }}>
-              <Button type="button" variant="ghost" onClick={resetPreview} disabled={busy}>
-                Отмена
-              </Button>
-              <Button type="button" onClick={() => void runApply()} disabled={busy}>
-                {applyMutation.isPending ? "Записываю…" : "Записать в программу"}
-              </Button>
-            </div>
-          </section>
-        )}
-        </section>
+        {screen === "update" ? (
+          <>
+            <p style={{ margin: 0 }}>
+              <Link to={pricesQueueHref()} style={entryLinkStyle}>
+                Ждут решения
+              </Link>
+            </p>
+            <h2 style={viewTitleStyle}>Обновить цены</h2>
+            {statusQuery.isError && (
+              <Alert tone="error">{getErrorMessage(statusQuery.error)}</Alert>
+            )}
+            <section aria-label="Текущие прайсы">
+              <h2 style={{ margin: "0 0 0.75rem", fontSize: "1.1rem" }}>Сейчас в программе</h2>
+              <div style={{ overflowX: "auto" }}>
+                <table style={{ width: "100%", borderCollapse: "collapse", fontSize: "0.95rem" }}>
+                  <thead>
+                    <tr style={{ textAlign: "left", color: "#475467" }}>
+                      <th style={{ padding: "0.5rem 0.6rem", borderBottom: "1px solid #e4e7ec" }}>Группа</th>
+                      <th style={{ padding: "0.5rem 0.6rem", borderBottom: "1px solid #e4e7ec" }}>Дата прайса</th>
+                      <th style={{ padding: "0.5rem 0.6rem", borderBottom: "1px solid #e4e7ec" }}>Записано</th>
+                      <th style={{ padding: "0.5rem 0.6rem", borderBottom: "1px solid #e4e7ec" }}>Строк</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {(statusQuery.data?.groups ?? []).map((group) => (
+                      <tr key={group.product_kind}>
+                        <td style={{ padding: "0.55rem 0.6rem", borderBottom: "1px solid #f2f4f7" }}>
+                          {priceDeskKindLabel(group.product_kind)}
+                        </td>
+                        <td style={{ padding: "0.55rem 0.6rem", borderBottom: "1px solid #f2f4f7" }}>
+                          {group.price_list_date ?? "—"}
+                        </td>
+                        <td style={{ padding: "0.55rem 0.6rem", borderBottom: "1px solid #f2f4f7" }}>
+                          {group.imported_at ?? "—"}
+                        </td>
+                        <td style={{ padding: "0.55rem 0.6rem", borderBottom: "1px solid #f2f4f7" }}>
+                          {group.row_count}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </section>
+            <section aria-label="Загрузка прайса завода" style={{ display: "grid", gap: "0.85rem" }}>
+              <h2 style={{ margin: 0, fontSize: "1.1rem" }}>Загрузка прайса завода</h2>
+              <div
+                role="button"
+                tabIndex={0}
+                aria-label="Выбрать или перетащить файл Excel"
+                onClick={() => inputRef.current?.click()}
+                onKeyDown={(event) => {
+                  if (event.key === "Enter" || event.key === " ") {
+                    event.preventDefault();
+                    inputRef.current?.click();
+                  }
+                }}
+                onDragEnter={(event) => {
+                  event.preventDefault();
+                  setDragOver(true);
+                }}
+                onDragOver={(event) => {
+                  event.preventDefault();
+                  setDragOver(true);
+                }}
+                onDragLeave={(event) => {
+                  event.preventDefault();
+                  setDragOver(false);
+                }}
+                onDrop={onDrop}
+                style={{
+                  border: `2px dashed ${dragOver ? "#2b5cff" : "#d0d5dd"}`,
+                  borderRadius: 14,
+                  padding: "1.75rem 1.25rem",
+                  textAlign: "center",
+                  background: dragOver ? "#eef2ff" : "#f8faff",
+                  cursor: busy ? "wait" : "pointer",
+                  color: "#344054",
+                }}
+              >
+                <div style={{ fontWeight: 600, marginBottom: "0.35rem" }}>
+                  {previewMutation.isPending ? "Считаю дифф…" : "Перетащите .xls или .xlsx сюда"}
+                </div>
+                <div style={{ fontSize: "0.9rem", color: "#667085" }}>
+                  или нажмите, чтобы выбрать файл
+                  {selectedFile ? (
+                    <>
+                      <br />
+                      Выбран: {selectedFile.name}
+                    </>
+                  ) : null}
+                </div>
+                <input
+                  ref={inputRef}
+                  type="file"
+                  accept={ACCEPT}
+                  hidden
+                  disabled={busy}
+                  onChange={(event) => {
+                    const file = event.target.files?.[0];
+                    if (file) {
+                      void runPreview(file);
+                    }
+                  }}
+                />
+              </div>
 
-        <section aria-label="Выгрузка из 1С" style={{ display: "grid", gap: "0.75rem" }}>
-          <h2 style={{ margin: 0, fontSize: "1.1rem" }}>Выгрузка из 1С</h2>
-          <p style={{ margin: 0, color: "#475467" }}>
-            Полный «Прайс-лист» (.xls) или универсальный отчёт с УИД (.xlsx). Выгрузка с отбором
-            работает в частичном режиме — позиции вне файла не считаем исчезнувшими.
-          </p>
-          <div>
-            <Button type="button" onClick={() => setImport1cOpen(true)}>
-              Загрузить выгрузку 1С
-            </Button>
-          </div>
-          <Import1cDialog open={import1cOpen} onClose={() => setImport1cOpen(false)} />
-        </section>
+              {errorText && <Alert tone="error">{errorText}</Alert>}
 
-        <TasksSection />
-        <DuplicatesSection />
+              {preview && (
+                <section aria-label="Дифф прайса" style={{ display: "grid", gap: "0.75rem" }}>
+                  <Alert tone="info">
+                    {priceDeskKindLabel(preview.product_kind)}
+                    {preview.price_list_date ? ` · дата ${preview.price_list_date}` : ""}
+                    {`: ${preview.parsed_rows} строк, изменено ${preview.changed}, новых ${preview.new}, пропало ${preview.missing}, без изменений ${preview.unchanged}.`}
+                  </Alert>
+                  <DiffBucket title="Изменились" items={preview.examples.changed} />
+                  <DiffBucket title="Новые" items={preview.examples.new} />
+                  <DiffBucket
+                    title="Пропали из файла (останутся со старой ценой)"
+                    items={preview.examples.missing}
+                  />
+                  <div style={{ display: "flex", justifyContent: "flex-end", gap: "0.5rem" }}>
+                    <Button type="button" variant="ghost" onClick={resetPreview} disabled={busy}>
+                      Отмена
+                    </Button>
+                    <Button type="button" onClick={() => void runApply()} disabled={busy}>
+                      {applyMutation.isPending ? "Записываю…" : "Записать в программу"}
+                    </Button>
+                  </div>
+                </section>
+              )}
+            </section>
+          </>
+        ) : null}
       </div>
     </main>
   );

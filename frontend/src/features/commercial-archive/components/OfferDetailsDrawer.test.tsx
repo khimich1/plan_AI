@@ -375,6 +375,40 @@ describe("OfferDetailsDrawer readiness visibility", () => {
     expect(screen.getByTestId("kp-readiness-block")).toBeInTheDocument();
   });
 
+  it("shows the last mark replacement and hides the block when history is empty", () => {
+    mockUseArchiveOfferQuery.mockReturnValue({
+      data: makeOffer("в архиве", null, {
+        mark_changes: [
+          {
+            mark_old: "Плиты ПБ 22,80-12-8п",
+            mark_new: "Плиты ПБ 22,8-12-8п",
+            changed_at: "2026-11-12T10:00:00",
+            changed_by: "иванова",
+          },
+        ],
+      }),
+      isPending: false,
+      isError: false,
+      error: null,
+    });
+
+    render(<OfferDetailsDrawer open kpId={42} onClose={vi.fn()} />);
+
+    expect(screen.getByTestId("mark-changes")).toHaveTextContent(
+      "марка Плиты ПБ 22,80-12-8п заменена на Плиты ПБ 22,8-12-8п, 2026-11-12T10:00:00, иванова",
+    );
+
+    cleanup();
+    mockUseArchiveOfferQuery.mockReturnValue({
+      data: makeOffer("в архиве"),
+      isPending: false,
+      isError: false,
+      error: null,
+    });
+    render(<OfferDetailsDrawer open kpId={42} onClose={vi.fn()} />);
+    expect(screen.queryByTestId("mark-changes")).not.toBeInTheDocument();
+  });
+
   it("shows editable delivery schedule button for в работе", () => {
     mockUseArchiveOfferQuery.mockReturnValue({
       data: makeOffer("в работе", makeReadiness()),

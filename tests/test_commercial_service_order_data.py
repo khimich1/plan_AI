@@ -128,3 +128,57 @@ def test_unpriced_position_labels_finds_zero_priced_plate(
     assert "ПБ 75-12-12п" in labels
 
     assert collect_unpriced_positions(order_data, db_path=str(db_path)) == ["ПБ 75-12-12п"]
+
+
+# --- NG-102: имя и load_class берутся у выбранной карточки (12,5 → 1250) ----------
+
+
+def _build_with_cache(canonical: str | None, *, load_code: float = 12) -> list[dict]:
+    service = CommercialService()
+    order = PlateOrder()
+    key = (7.5, 1.2, float(load_code), "75")
+    order.nomenclature_cache[key] = {
+        "canonical_name": canonical,
+        "nomenclature_id": "0de0f4a7-dc8e-11ea-8f69-04d9f5387845" if canonical else None,
+    }
+    parse_result = ParseResult(
+        order=order,
+        normalized_text="",
+        line_plate_load_details=[{key: 1}],
+    )
+    items = [{"length": 7.5, "width": 1.2, "qty": 1, "load_code": load_code, "length_dm_raw": "75"}]
+    return service._build_order_data(items, [], order, parse_result)
+
+
+def test_build_order_data_alias_card_gives_load_class_1250() -> None:
+    order_data = _build_with_cache("Плиты ПБ 75-12-12,5п")
+
+    assert order_data[0]["name"] == "Плиты ПБ 75-12-12,5п"
+    assert order_data[0]["load_class"] == 1250
+    assert order_data[0]["nomenclature_id"] == "0de0f4a7-dc8e-11ea-8f69-04d9f5387845"
+
+
+def test_build_order_data_without_canonical_keeps_typed_load_class() -> None:
+    order_data = _build_with_cache(None)
+
+    assert order_data[0]["load_class"] == 1200
+
+
+def test_build_order_data_card_with_tail_keeps_typed_load_class() -> None:
+    order_data = _build_with_cache("Плиты ПБ 75-12-12п Пв-7.1")
+
+    assert order_data[0]["load_class"] == 1200
+
+
+def test_build_order_data_same_load_card_is_unchanged() -> None:
+    order_data = _build_with_cache("Плиты ПБ 75-12-8п", load_code=8)
+
+    assert order_data[0]["load_class"] == 800
+
+
+def test_load_class_1250_gives_load_12_in_production_and_price() -> None:
+    from core.config_and_data import load_code_for_price_match
+    from core.domain.plate_order import normalize_load_code
+
+    assert normalize_load_code(1250 // 100) == 12
+    assert load_code_for_price_match(12.5) == load_code_for_price_match(12)

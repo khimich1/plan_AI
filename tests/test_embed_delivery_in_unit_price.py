@@ -13,7 +13,6 @@ from typing import Any
 from openpyxl import load_workbook
 
 from core.commercial_offer_xlsx import calculate_total_cost, generate_commercial_offer_xlsx
-from core.commercial_pricing import VAT_RATE
 from core.embed_delivery_in_unit_price import (
     allocate_line_delivery_kopecks,
     embed_delivery_in_unit_prices,
@@ -345,15 +344,82 @@ def _all_cell_texts(ws) -> list[str]:
     return texts
 
 
-def _vat_formula(ws) -> str:
+def _vat_cell_value(ws):
     for row in ws.iter_rows(min_row=1, max_row=80, max_col=8):
         for cell in row:
             if cell.value == "в том числе НДС (22%)":
                 _, _, sum_col, _ = _table_layout(ws)
-                formula = ws.cell(row=cell.row, column=sum_col).value
-                assert isinstance(formula, str), formula
-                return formula
+                return ws.cell(row=cell.row, column=sum_col).value
     raise AssertionError("VAT row not found")
+
+
+def test_embed_xlsx_reference_markup_5_writes_invoice_prices() -> None:
+    """Эталон 2: цена счёта и сумма строки, колонка «Сумма» — число."""
+    order = [
+        {
+            "name": "С40.30-8",
+            "qty": 200,
+            "unit_price": 8949.283209360001,
+            "length_m": 0.1,
+            "width_m": 0.1,
+            "product_type": "plates",
+        },
+        {
+            "name": "С60.30-8",
+            "qty": 30,
+            "unit_price": 13312.012003200003,
+            "length_m": 0.1,
+            "width_m": 0.1,
+            "product_type": "plates",
+        },
+    ]
+    ws = _load_kp_sheet(
+        order,
+        discount_percent=5.0,
+        logistics_cost=168000.0,
+        kp_db_id=26,
+        embed_delivery_in_unit_price=True,
+    )
+    header_row, _name_col, sum_col, first_data = _table_layout(ws)
+    price_col = [cell.value for cell in ws[header_row]].index("Цена") + 1
+    prices = [
+        ws.cell(row=first_data, column=price_col).value,
+        ws.cell(row=first_data + 1, column=price_col).value,
+    ]
+    sums = [
+        ws.cell(row=first_data, column=sum_col).value,
+        ws.cell(row=first_data + 1, column=sum_col).value,
+    ]
+    assert [round(float(value), 2) for value in prices] == [9188.58, 13667.97]
+    assert [round(float(value), 2) for value in sums] == [1837716.92, 410039.23]
+    assert all(not isinstance(value, str) for value in sums)
+    _, deliveries = _product_and_delivery_rows(ws)
+    assert deliveries == []
+    vat = _vat_cell_value(ws)
+    assert isinstance(vat, (int, float))
+    assert abs(float(vat) - 405333.08) < 0.001
+    blob = "\n".join(_all_cell_texts(ws))
+    assert "Скидка на доставку не распространяется" not in blob
+
+
+def test_embed_xlsx_does_not_call_unit_surcharge(monkeypatch) -> None:
+    def boom(**_kwargs: Any) -> None:
+        raise AssertionError("embed_delivery_in_unit_prices must not run")
+
+    monkeypatch.setattr(
+        "core.embed_delivery_in_unit_price.embed_delivery_in_unit_prices",
+        boom,
+    )
+    import core.commercial_offer_xlsx as xlsx_mod
+
+    if hasattr(xlsx_mod, "embed_delivery_in_unit_prices"):
+        monkeypatch.setattr(xlsx_mod, "embed_delivery_in_unit_prices", boom)
+    _load_kp_sheet(
+        _discount_plate_order(),
+        discount_percent=50,
+        logistics_cost=100.0,
+        embed_delivery_in_unit_price=True,
+    )
 
 
 def test_generate_xlsx_accepts_embed_flag_default_false() -> None:
@@ -378,23 +444,27 @@ def test_embed_xlsx_hides_delivery_and_keeps_grand_total() -> None:
     assert abs(sum(amounts) - 161.0) < 0.01
 
 
-def test_embed_xlsx_vat_formula_covers_all_product_rows() -> None:
+def test_embed_xlsx_vat_is_included_rate_even_for_old_kp() -> None:
+    """Порог kp_id < 27 на вшитый файл не действует: НДС — число 22/122."""
     order = _discount_plate_order()
     ws = _load_kp_sheet(
         order,
         discount_percent=50,
         logistics_cost=100.0,
+        kp_db_id=1,
         embed_delivery_in_unit_price=True,
     )
     products, _ = _product_and_delivery_rows(ws)
-    formula = _vat_formula(ws)
-    product_sum = sum(float(value) for _, value in products)
-    assert "*0.22" in formula.replace(" ", "") or f"*{VAT_RATE}" in formula.replace(" ", "")
-    assert "SUM(" in formula.upper()
-    assert abs(product_sum * VAT_RATE - 161.0 * 0.22) < 0.01
+    value = _vat_cell_value(ws)
+    product_sum = sum(float(amount) for _, amount in products)
+    assert isinstance(value, (int, float))
+    assert abs(product_sum - 161.0) < 0.01
+    assert abs(float(value) - 29.03) < 0.001
+    for _, amount in products:
+        assert not isinstance(amount, str)
 
 
-def test_embed_xlsx_adds_delivery_footnote() -> None:
+def test_embed_xlsx_has_no_delivery_footnote() -> None:
     order = _discount_plate_order()
     ws = _load_kp_sheet(
         order,
@@ -403,8 +473,8 @@ def test_embed_xlsx_adds_delivery_footnote() -> None:
         embed_delivery_in_unit_price=True,
     )
     blob = "\n".join(_all_cell_texts(ws))
-    assert "В стоимость изделий включена доставка" in blob
-    assert "Скидка на доставку не распространяется" in blob
+    assert "В стоимость изделий включена доставка" not in blob
+    assert "Скидка на доставку не распространяется" not in blob
 
 
 def test_plain_xlsx_still_has_delivery_row() -> None:
@@ -440,13 +510,14 @@ def test_embed_xlsx_mixed_pools_drop_both_delivery_rows(tmp_path: Path) -> None:
     amounts = [float(value) for _, value in products]
     assert abs(sum(amounts) - totals["total_with_vat"]) < 0.01
     blob = "\n".join(_all_cell_texts(ws))
-    assert "В стоимость изделий включена доставка" in blob
+    assert "В стоимость изделий включена доставка" not in blob
+    assert "Скидка на доставку не распространяется" not in blob
 
 
-def test_embed_xlsx_keeps_delivery_row_for_unembedded_pool(
+def test_embed_xlsx_drops_delivery_row_even_for_unallocated_pool(
     tmp_path: Path, monkeypatch
 ) -> None:
-    """Plate delivery > 0 with zero plate qty: keep that row, still embed piles."""
+    """Котёл без штук не оставляет строку доставки: во вшитом файле её нет."""
     import core.commercial_offer_xlsx as xlsx_mod
 
     real_totals = xlsx_mod.calculate_total_cost
@@ -489,7 +560,7 @@ def test_embed_xlsx_keeps_delivery_row_for_unembedded_pool(
         embed_delivery_in_unit_price=True,
     )
     _, deliveries = _product_and_delivery_rows(ws)
-    assert any("доставк" in name.lower() for name in deliveries)
-    assert "Доставка свай" not in deliveries
+    assert deliveries == []
     blob = "\n".join(_all_cell_texts(ws))
-    assert "В стоимость изделий включена доставка" in blob
+    assert "В стоимость изделий включена доставка" not in blob
+    assert "Скидка на доставку не распространяется" not in blob

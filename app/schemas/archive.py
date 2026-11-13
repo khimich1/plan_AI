@@ -208,6 +208,15 @@ class KpReadinessPositionsResponse(BaseModel):
     count: int
 
 
+class MarkChangeNote(BaseModel):
+    """Последняя замена марки в истории КП."""
+
+    mark_old: str
+    mark_new: str
+    changed_at: str
+    changed_by: str | None = None
+
+
 class ArchiveOfferDetails(BaseModel):
     """Полная карточка КП для страницы архива."""
 
@@ -263,6 +272,7 @@ class ArchiveOfferDetails(BaseModel):
     invoice_warehouse: str | None = None
     specification_saved: bool = False
     specification_stale_custom: bool = False
+    mark_changes: list[MarkChangeNote] = Field(default_factory=list)
 
 
 class BindCounterpartyRequest(BaseModel):

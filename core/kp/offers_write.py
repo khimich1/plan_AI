@@ -97,10 +97,14 @@ def update_kp_from_order_data(
     fbs_lm_delivery_enabled: bool | None = None,
     long_pile_delivery_enabled: bool | None = None,
     long_pile_delivery: dict | None = None,
+    _external_conn: Optional[sqlite3.Connection] = None,
+    changed_by: Optional[str] = None,
+    history_source: str = "edit",
 ) -> int:
     """Обновляет существующее КП (sync по line_id). Тот же ``kp_id``.
 
     Оркестрация — :class:`core.kp_persistence_service.KpPersistenceService`.
+    ``_external_conn``: транзакция вызывающего, без commit/rollback/close.
     """
     from core.kp_persistence_service import KpPersistenceService
 
@@ -122,6 +126,9 @@ def update_kp_from_order_data(
         fbs_lm_delivery_enabled=fbs_lm_delivery_enabled,
         long_pile_delivery_enabled=long_pile_delivery_enabled,
         long_pile_delivery=long_pile_delivery,
+        _external_conn=_external_conn,
+        changed_by=changed_by,
+        history_source=history_source,
     )
 
 

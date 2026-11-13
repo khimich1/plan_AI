@@ -32,6 +32,7 @@ from app.schemas.archive import (
     CapacityDayInfo,
     CapacitySnapshotResponse,
     KpReadinessPositionsResponse,
+    MarkChangeNote,
     SpecificationChoiceIn,
     SpecificationChoiceOut,
     SpecificationView,
@@ -48,6 +49,7 @@ from app.security.offer_access import (
     list_filters_for_user,
 )
 from app.services.file_generation_service import FileGenerationService
+from app.services.guid_queue_sync import sync_guid_queue_with_kp
 from app.services.manager_contact_lookup import (
     header_contacts_for_archive,
     load_managers_if_db_exists,
@@ -373,6 +375,9 @@ class ArchiveService:
         self._promises().release_on_delete(kp_id)
         if not self.repository.delete(kp_id):
             raise ArchiveNotFoundError(f"КП №{kp_id} уже удалено или не существует")
+        sync_guid_queue_with_kp(
+            get_settings().pb_db_path, self.repository.db_path
+        )
 
     def export_invoice(
         self,
@@ -1427,7 +1432,28 @@ class ArchiveService:
             invoice_warehouse=_stored_invoice_warehouse(raw.get("invoice_warehouse")),
             specification_saved=saved_spec,
             specification_stale_custom=stale_spec,
+            mark_changes=self._mark_changes(kp_id),
         )
+
+    def _mark_changes(self, kp_id: int) -> list[MarkChangeNote]:
+        try:
+            with sqlite3.connect(self.repository.db_path) as conn:
+                rows = conn.execute(
+                    "SELECT mark_old, mark_new, changed_at, changed_by FROM kp_mark_history "
+                    "WHERE kp_id = ? ORDER BY id DESC LIMIT 5",
+                    (kp_id,),
+                ).fetchall()
+        except sqlite3.Error:
+            return []
+        return [
+            MarkChangeNote(
+                mark_old=str(row[0] or ""),
+                mark_new=str(row[1] or ""),
+                changed_at=str(row[2] or ""),
+                changed_by=(str(row[3]).strip() or None) if row[3] is not None else None,
+            )
+            for row in rows
+        ]
 
     @staticmethod
     def _march_item(raw: dict) -> ArchiveMarchItem:

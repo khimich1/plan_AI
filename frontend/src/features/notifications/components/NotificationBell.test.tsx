@@ -115,6 +115,6 @@ describe("NotificationBell", () => {
 
     fireEvent.click(screen.getByRole("button", { name: /КП №12/ }));
     expect(mockMutate).toHaveBeenCalledWith(21);
-    expect(mockNavigate).toHaveBeenCalledWith("/prices");
+    expect(mockNavigate).toHaveBeenCalledWith("/prices?view=queue");
   });
 });

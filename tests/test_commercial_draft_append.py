@@ -1617,6 +1617,115 @@ def test_save_offer_with_saved_kp_id_rejects_when_status_not_archived(
         )
 
 
+# --- NG-002: сверка очереди «Завести в 1С» после сохранения КП ----------------
+
+
+@pytest.fixture(autouse=True)
+def _no_live_guid_queue_sync(monkeypatch: pytest.MonkeyPatch) -> list[tuple]:
+    """Сохранение КП в тестах не ходит в настоящие pb.db/plita.db: вызов сверки подменён."""
+    from app.services import commercial_draft_lifecycle as lifecycle
+
+    calls: list[tuple] = []
+    monkeypatch.setattr(
+        lifecycle, "sync_guid_queue_with_kp", lambda *args: calls.append(args)
+    )
+    return calls
+
+
+def _save_archived_kp_update(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    *,
+    saved_status: str,
+    events: list[str],
+) -> dict[str, Any]:
+    workflow = CommercialWorkflowService()
+    draft = _draft_with_saved_kp(kp_id=55, status=saved_status)
+    fake_xlsx = tmp_path / "kp-sync.xlsx"
+    fake_xlsx.write_bytes(b"xlsx")
+    monkeypatch.setattr(workflow, "_load_draft_or_raise", lambda _draft_id: draft)
+    monkeypatch.setattr(
+        workflow,
+        "generate_files",
+        lambda *_a, **_k: [{"kind": "xlsx", "filename": fake_xlsx.name}],
+    )
+    monkeypatch.setattr(
+        workflow.export_service, "resolve_generated_file", lambda filename: fake_xlsx
+    )
+    monkeypatch.setattr(workflow.draft_store, "update_metadata", lambda *a, **k: None)
+    monkeypatch.setattr(
+        workflow.kp_repository,
+        "update_offer_from_order_data",
+        lambda kp_id, **_kwargs: events.append("update") or kp_id,
+        raising=False,
+    )
+    monkeypatch.setattr(
+        "app.services.commercial_draft_lifecycle.recalc_promise_after_edit",
+        lambda *_a, **_k: None,
+    )
+    return workflow.save_offer(
+        "draft-mna304", execution_terms="", status="в архиве", save_mode="archive"
+    )
+
+
+@pytest.mark.parametrize("saved_status", ["в архиве", "на согласовании"])
+def test_save_offer_update_syncs_guid_queue_after_kp_is_written(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    _no_live_guid_queue_sync: list[tuple],
+    saved_status: str,
+) -> None:
+    events: list[str] = []
+    from app.services import commercial_draft_lifecycle as lifecycle
+
+    monkeypatch.setattr(
+        lifecycle, "sync_guid_queue_with_kp", lambda *args: events.append("sync")
+    )
+
+    result = _save_archived_kp_update(
+        tmp_path, monkeypatch, saved_status=saved_status, events=events
+    )
+
+    assert result["saved_offer"]["kp_id"] == 55
+    assert events == ["update", "sync"]
+
+
+def test_save_offer_succeeds_when_queue_sync_fails_and_pb_missing(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """Сверка не ломает сохранение: сбой внутри сверки и нет pb.db — ответ тот же."""
+    from app.services import commercial_draft_lifecycle as lifecycle
+    from app.services import guid_queue_sync
+
+    monkeypatch.setenv("PB_DB_PATH", str(tmp_path / "нет-pb.db"))
+    monkeypatch.setenv("PLITA_DB_PATH", str(tmp_path / "plita.db"))
+    get_settings.cache_clear()
+    monkeypatch.setattr(
+        lifecycle, "sync_guid_queue_with_kp", guid_queue_sync.sync_guid_queue_with_kp
+    )
+    (tmp_path / "plita.db").write_bytes(b"")
+
+    result = _save_archived_kp_update(
+        tmp_path, monkeypatch, saved_status="в архиве", events=[]
+    )
+    assert result["saved_offer"]["kp_id"] == 55
+
+    (tmp_path / "pb.db").write_bytes(b"")
+    monkeypatch.setenv("PB_DB_PATH", str(tmp_path / "pb.db"))
+    get_settings.cache_clear()
+    monkeypatch.setattr(
+        guid_queue_sync,
+        "reconcile_guid_demand",
+        lambda *_a: (_ for _ in ()).throw(RuntimeError("сбой сверки")),
+    )
+    result = _save_archived_kp_update(
+        tmp_path, monkeypatch, saved_status="в архиве", events=[]
+    )
+    assert result["saved_offer"]["kp_id"] == 55
+
+
 # --- MNA-601: hydrate draft from saved KP (status «в архиве» only) ----------
 #
 # Assumed contracts:

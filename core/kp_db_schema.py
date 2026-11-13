@@ -499,6 +499,27 @@ def _init_schema_impl(db_path: str = DEFAULT_DB) -> None:
             'CREATE INDEX IF NOT EXISTS idx_kp_id_fbs ON kp_fbs(kp_id)'
         )
 
+        # История смены марки строки КП (D-history). Аддитивно для старых баз.
+        cur.execute('''
+            CREATE TABLE IF NOT EXISTS kp_mark_history (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                kp_id INTEGER NOT NULL,
+                line_id TEXT NOT NULL,
+                product_kind TEXT,
+                mark_old TEXT,
+                mark_new TEXT,
+                unit_price_old REAL,
+                unit_price_new REAL,
+                changed_by TEXT,
+                changed_at TEXT NOT NULL,
+                source TEXT NOT NULL,
+                FOREIGN KEY (kp_id) REFERENCES KP_offers(kp_id) ON DELETE CASCADE
+            )
+        ''')
+        cur.execute(
+            'CREATE INDEX IF NOT EXISTS idx_kp_mark_history_kp ON kp_mark_history(kp_id)'
+        )
+
         # MNA-301: line_id на всех kp_* line-таблицах (idempotent ALTER для legacy БД).
         # kp_plates уже мигрирована выше (try/except рядом с unit_price); остальные — здесь.
         _ensure_line_id_columns(cur)

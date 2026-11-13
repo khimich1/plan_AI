@@ -49,3 +49,48 @@ def test_parse_plate_text_lwh_mm_format_emits_load_warning():
     assert sum(result.order.plate_load_details.values()) == 14
     assert any("Проверьте нагрузку" in warning for warning in result.warnings)
     assert any(d.get("load_assumed") is True for d in result.diagnostics)
+
+
+# --- NG-102: набрано 12,5п — в кэше номенклатуры ищется 12,5п, не откат на 12п ----
+
+
+def _parser_with_prays(tmp_path, rows):
+    import sqlite3
+
+    from app.services.plate_parser_service import PlateParserService
+
+    service = PlateParserService()
+    service.pb_db_path = tmp_path / "pb.db"
+    with sqlite3.connect(service.pb_db_path) as conn:
+        conn.execute(
+            'CREATE TABLE prays_plity ("Уникальный идентификатор (Номенклатура)" TEXT, "Товар" TEXT)'
+        )
+        conn.executemany("INSERT INTO prays_plity VALUES (?, ?)", rows)
+    return service
+
+
+def _order_with_key(load_code):
+    from app.domain.models.plate_order import PlateOrder
+
+    order = PlateOrder()
+    key = (7.5, 1.2, load_code, "75")
+    order.plate_load_details[key] = 1
+    return order, key
+
+
+def test_nomenclature_cache_keeps_12_5_and_does_not_fall_back_to_12(tmp_path) -> None:
+    service = _parser_with_prays(tmp_path, [("NOM-12", "Плиты ПБ 75-12-12п")])
+    order, key = _order_with_key(12.5)
+
+    service._fill_nomenclature_cache(order)
+
+    assert order.nomenclature_cache[key]["canonical_name"] is None
+
+
+def test_nomenclature_cache_finds_12_5_card_for_typed_12_5(tmp_path) -> None:
+    service = _parser_with_prays(tmp_path, [("NOM-125", "Плиты ПБ 75-12-12,5п")])
+    order, key = _order_with_key(12.5)
+
+    service._fill_nomenclature_cache(order)
+
+    assert order.nomenclature_cache[key]["canonical_name"] == "Плиты ПБ 75-12-12,5п"

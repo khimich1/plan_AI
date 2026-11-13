@@ -1,6 +1,12 @@
 import { httpClient } from "@/shared/api/httpClient";
 import { getProductTypeConfig } from "@/features/commercial-offer/lib/productTypeConfig";
 import type {
+  GuidExplainResponse,
+  GuidReplaceBody,
+  GuidReplacePreview,
+  GuidSearchResponse,
+} from "@/features/nomenclature/types/nomenclature";
+import type {
   BreakdownResponse,
   CommercialDraftDetails,
   CommercialGeneratedFile,
@@ -320,4 +326,28 @@ export const commercialOfferApi = {
 
   checkGuids: (draftId: string) =>
     httpClient.get<GuidCheckResponse>(`/api/v1/commercial/drafts/${draftId}/guid-check`),
+
+  explainGuid: (draftId: string, productKind: string, mark: string) =>
+    httpClient.get<GuidExplainResponse>(
+      `/api/v1/commercial/drafts/${draftId}/guid-explain?${new URLSearchParams({ product_kind: productKind, mark })}`,
+    ),
+
+  searchGuid: (draftId: string, productKind: string, query: string) =>
+    httpClient.get<GuidSearchResponse>(
+      `/api/v1/commercial/drafts/${draftId}/guid-search?${new URLSearchParams({ product_kind: productKind, q: query })}`,
+    ),
+
+  previewGuidReplace: (draftId: string, body: GuidReplaceBody) =>
+    httpClient.post<GuidReplacePreview>(
+      `/api/v1/commercial/drafts/${draftId}/guid-replace/preview`,
+      JSON.stringify(body),
+      { "Content-Type": "application/json" },
+    ),
+
+  replaceGuid: (draftId: string, body: GuidReplaceBody) =>
+    httpClient.post<CommercialDraftDetails>(
+      `/api/v1/commercial/drafts/${draftId}/guid-replace`,
+      JSON.stringify(body),
+      { "Content-Type": "application/json" },
+    ),
 };

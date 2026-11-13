@@ -241,3 +241,42 @@ def test_sweep_leaves_unrelated_open_mark(conn: sqlite3.Connection) -> None:
     assert opened[0].mark == "С70.35-9у"
     assert opened[0].field == FIELD_GUID_U
     assert opened[0].state == STATE_OPEN
+
+
+# --- NG-103: sweep обновляет reason/hint при той же field ----------------------
+
+
+def test_sweep_refreshes_reason_and_hint_when_text_changes(conn: sqlite3.Connection) -> None:
+    from core.guid_gate import REASON_VARIANTS
+
+    conn.execute(
+        'CREATE TABLE IF NOT EXISTS prays_plity ('
+        '"Уникальный идентификатор (Номенклатура)" TEXT, "Товар" TEXT)'
+    )
+    conn.executemany(
+        "INSERT INTO prays_plity VALUES (?, ?)",
+        [
+            (PLAIN_GUID, "Плиты ПБ 51-12-12п Пв-7.1"),
+            (OTHER_GUID, "Плиты ПБ 51-12-12п Пв-7.2"),
+        ],
+    )
+    record_guid_demand(conn, 206, [_missing("plate", "Плиты ПБ 51-12-12п")])
+    assert list_open(conn)[0].reason == REASON_MISSING
+
+    sweep_guid_demand(conn)
+
+    rows = list_open(conn)
+    assert len(rows) == 1
+    assert rows[0].field == FIELD_GUID
+    assert rows[0].reason == REASON_VARIANTS
+    assert "Пв-7.1" in rows[0].hint
+    assert list(rows[0].kp_ids) == [206]
+
+
+def test_sweep_leaves_row_untouched_when_text_is_the_same(conn: sqlite3.Connection) -> None:
+    record_guid_demand(conn, 7, [_missing("pile", "С30.30-3")])
+    before = conn.execute("SELECT * FROM guid_demand").fetchall()
+
+    sweep_guid_demand(conn)
+
+    assert conn.execute("SELECT * FROM guid_demand").fetchall() == before

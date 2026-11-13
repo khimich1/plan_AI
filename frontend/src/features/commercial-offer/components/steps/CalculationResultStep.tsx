@@ -39,7 +39,9 @@ import { getProductTypeConfig, PRODUCT_TYPE_CONFIG } from "@/features/commercial
 import { estimateFromLengthM } from "@/features/production/lib/productionEstimate";
 import { ProductionEstimateAlert } from "@/shared/ui/ProductionEstimateAlert";
 import { StepLayout } from "@/shared/ui/StepLayout";
+import { useDraftGuidExplainSource } from "@/features/commercial-offer/hooks/useDraftGuidExplainSource";
 import { useGuidCheckQuery } from "@/features/commercial-offer/hooks/useGuidCheckQuery";
+import { GuidExplainPanel } from "@/features/nomenclature/components/GuidExplainPanel";
 import {
   collectLongPileTariffs,
   formatLongPileMeters,
@@ -123,6 +125,7 @@ type CalculationResultStepProps = {
   onUndoLastBatch?: () => Promise<void> | void;
   onDeleteLine?: (lineId: string) => Promise<void> | void;
   onSaveLine?: (lineId: string, payload: LineSavePayload) => Promise<void> | void;
+  onGuidReplaced?: () => void;
   lineUndoToast?: LineUndoToastState | null;
   lineRowError?: LineRowErrorState | null;
 };
@@ -151,6 +154,7 @@ export const CalculationResultStep = ({
   onUndoLastBatch,
   onDeleteLine,
   onSaveLine,
+  onGuidReplaced,
   lineUndoToast = null,
   lineRowError = null,
 }: CalculationResultStepProps) => {
@@ -171,6 +175,7 @@ export const CalculationResultStep = ({
   const [pendingDiscountPercent, setPendingDiscountPercent] = useState<number | null>(null);
   const guidCheck = useGuidCheckQuery(draft.draft_id);
   const guidMissing = guidCheck.data?.missing ?? [];
+  const guidExplainSource = useDraftGuidExplainSource(draft.draft_id);
   const draftConfig = getProductTypeConfig(draftProductType ?? draft.metadata.product_type);
   const isGradeSimpleDraft = draftConfig.supportsGrades;
   const isStepsProduct = draftConfig.productType === "steps";
@@ -471,6 +476,12 @@ export const CalculationResultStep = ({
             {guidMissing.map((item) => (
               <li key={`${item.product_kind}-${item.mark}`}>
                 {item.mark} — {item.reason}
+                <GuidExplainPanel
+                  source={guidExplainSource}
+                  productKind={item.product_kind}
+                  mark={item.mark}
+                  onCommitted={onGuidReplaced}
+                />
               </li>
             ))}
           </ul>

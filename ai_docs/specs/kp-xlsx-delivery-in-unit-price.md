@@ -6,6 +6,8 @@
 > **Статус:** ready for implementation  
 > **Дата:** 2026-09-10  
 > **Связанные модули:** `OfferDetailsDrawer`, `ArchiveFileKind`, `ArchiveService.generate_document`, `core/commercial_offer_xlsx.py`, `core/commercial_pricing.calculate_total_cost`
+> **С 2026-11-11:** D4, D5, D8 и D10 для этой кнопки заменены. Цену, сумму и НДС задаёт [`1c-delivery-invoice-parity.md`](1c-delivery-invoice-parity.md), чтобы файл совпал со счётом 1С. Запрет писать цены в базу остаётся.  
+> **С 2026-11-13:** D2 и D12 заменены. Файл для заказчика — PDF, не XLSX. Кнопка, kind и имя файла задаёт [`kp-pdf-delivery-in-unit-price.md`](kp-pdf-delivery-in-unit-price.md). Пункт «PDF с доставкой в цене» в Out of scope снят. «Ask first: PDF в том же режиме» закрыт этой спекой.
 
 ---
 

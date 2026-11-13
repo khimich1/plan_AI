@@ -324,3 +324,115 @@ def test_order_lines_from_draft_payload() -> None:
         ("pile", "С110.30-9у", 2),
         ("plate", "ПБ 51-12-8", 4),
     ]
+
+
+# --- NG-101 / NG-103: «12 → 12,5п» до LIKE, особые карточки, REASON_VARIANTS ----
+
+GUID_125 = "0de0f4a7-dc8e-11ea-8f69-04d9f5387845"
+GUID_PV71 = "ad13b504-96c5-11eb-8f7e-04d9f5387845"
+GUID_PV72 = "b3596b8f-96c5-11eb-8f7e-04d9f5387845"
+
+
+def _seed_51_12_cards(conn: sqlite3.Connection, *, standard: bool = True) -> None:
+    _seed_unique_plate(conn, "Плиты ПБ 51-12-12п Пв-7.1", GUID_PV71)
+    _seed_unique_plate(conn, "Плиты ПБ 51-12-12п Пв-7.2", GUID_PV72)
+    if standard:
+        _seed_unique_plate(conn, "Плиты ПБ 51-12-12,5п", GUID_125)
+
+
+def test_plate_51_12_12p_takes_standard_card_not_special(conn: sqlite3.Connection) -> None:
+    _seed_51_12_cards(conn)
+
+    report = check_invoice_guids([OrderLine("plate", "Плиты ПБ 51-12-12п")], conn)
+
+    assert report.missing == ()
+    assert report.ready[0].guid == GUID_125
+
+
+def test_plate_special_cards_only_gives_variants_reason(conn: sqlite3.Connection) -> None:
+    from core.guid_gate import HINT_CREATE, REASON_VARIANTS
+
+    _seed_51_12_cards(conn, standard=False)
+
+    report = check_invoice_guids([OrderLine("plate", "Плиты ПБ 51-12-12,5п")], conn)
+
+    assert report.ready == ()
+    # набрано 12,5п — на 12п с хвостом не откатываемся, особых для 12,5п нет
+    assert report.missing[0].reason != REASON_VARIANTS
+    assert report.missing[0].action_hint == HINT_CREATE
+
+
+def test_plate_like_with_several_cards_is_variants_with_hint(conn: sqlite3.Connection) -> None:
+    from core.guid_gate import REASON_VARIANTS
+
+    _seed_51_12_cards(conn, standard=False)
+
+    report = check_invoice_guids([OrderLine("plate", "Плиты ПБ 51-12-12п")], conn)
+
+    assert report.ready == ()
+    item = report.missing[0]
+    assert item.reason == REASON_VARIANTS
+    assert "Пв-7.1" in item.action_hint and "Пв-7.2" in item.action_hint
+    assert "заведите карточку в 1С" in item.action_hint
+    assert item.candidates == (
+        "Плиты ПБ 51-12-12п Пв-7.1",
+        "Плиты ПБ 51-12-12п Пв-7.2",
+    )
+
+
+def test_variants_hint_lists_three_names_and_rest_count(conn: sqlite3.Connection) -> None:
+    for index in range(5):
+        _seed_unique_plate(
+            conn, f"Плиты ПБ 66,1-12-12п с выбр {index}", f"{index}0000000-0000-0000-0000-000000000000"
+        )
+
+    report = check_invoice_guids([OrderLine("plate", "Плиты ПБ 66,1-12-12п")], conn)
+
+    hint = report.missing[0].action_hint
+    assert hint.count("с выбр") == 3
+    assert "и ещё 2" in hint
+    assert len(hint) < 260
+
+
+def test_plate_variants_is_not_a_duplicate_reason(conn: sqlite3.Connection) -> None:
+    from core.guid_gate import REASON_DUP
+
+    _seed_51_12_cards(conn, standard=False)
+
+    report = check_invoice_guids([OrderLine("plate", "Плиты ПБ 51-12-12п")], conn)
+
+    assert report.missing[0].reason != REASON_DUP
+
+
+def test_plate_dup_choice_is_found_by_card_name_for_variant_spelling(
+    conn: sqlite3.Connection,
+) -> None:
+    _seed_duplicate_plate(conn, "Плиты ПБ 22,8-12-8п")
+    set_choice(
+        conn,
+        "Плиты ПБ 22,8-12-8п",
+        chosen_guid=PLATE_GUID_B,
+        chosen_name="Плиты ПБ 22,8-12-8п",
+    )
+
+    report = check_invoice_guids([OrderLine("plate", "Плиты ПБ 22,80-12-8п")], conn)
+
+    assert report.missing == ()
+    assert report.ready[0].guid == PLATE_GUID_B
+
+
+def test_plate_dup_variant_spelling_without_choice_is_dup(conn: sqlite3.Connection) -> None:
+    from core.guid_gate import REASON_DUP
+
+    _seed_duplicate_plate(conn, "Плиты ПБ 22,8-12-8п")
+
+    report = check_invoice_guids([OrderLine("plate", "Плиты ПБ 22,80-12-8п")], conn)
+
+    assert report.missing[0].reason == REASON_DUP
+
+
+def test_field_for_reason_variants_goes_to_guid_field() -> None:
+    from core.guid_demand import FIELD_GUID, field_for_reason
+    from core.guid_gate import REASON_VARIANTS
+
+    assert field_for_reason(REASON_VARIANTS) == FIELD_GUID

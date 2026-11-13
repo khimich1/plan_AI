@@ -16,6 +16,7 @@ from app.domain.models.plate_order import PlateOrder
 from app.schemas.commercial import WizardStepId
 from app.services.commercial_order_identity import APPEND_PRODUCT_TYPES
 from app.services.counterparties_service import CounterpartiesService
+from app.services.guid_queue_sync import sync_guid_queue_with_kp
 from app.services.product_draft_config import SPECS
 from core.commercial_pricing import (
     coerce_fbs_lm_delivery_enabled,
@@ -171,6 +172,33 @@ def _rebuild_append_batches(
             }
         )
     return rebuilt
+
+
+def _guid_preview_payload(preview: Any) -> dict[str, Any]:
+    def money(view: Any) -> dict[str, float]:
+        return {
+            "unit_price": view.unit_price,
+            "unit_discounted": view.unit_discounted,
+            "line_sum": view.line_sum,
+            "total": view.total,
+            "subtotal": view.subtotal,
+            "vat_amount": view.vat_amount,
+        }
+
+    return {
+        "items": [
+            {
+                "kp_id": 0,
+                "qty": preview.qty,
+                "was": money(preview.was),
+                "will": money(preview.will),
+                "delivery_was": preview.delivery_was,
+                "delivery_will": preview.delivery_will,
+                "oneoff_notice": preview.oneoff_notice,
+            }
+        ],
+        "skipped": [],
+    }
 
 
 def _invalidate_breakdown(metadata: dict[str, Any]) -> None:
@@ -410,6 +438,127 @@ class CommercialDraftLifecycle:
             metadata=metadata,
         )
         return self.get_draft_details(draft_id)
+
+    def preview_guid_mark(
+        self,
+        draft_id: str,
+        *,
+        product_kind: str,
+        mark: str,
+        target_mark: str,
+    ) -> dict[str, Any]:
+        """Деньги черновика до и после замены. Ничего не записывает."""
+        order, _indexes, target, discount, logistics, _metadata = self._prepare_guid_mark(
+            draft_id,
+            product_kind=product_kind,
+            mark=mark,
+            target_mark=target_mark,
+        )
+        from core.guid_replace import preview_replacement
+
+        preview = preview_replacement(
+            order,
+            source_mark=mark,
+            target=target,
+            discount_percent=discount,
+            kind=product_kind,
+            actor="manager",
+            pb_db_path=self._pb_db_path(),
+            totals_db_path=self._pb_db_path(),
+            logistics_cost=logistics,
+        )
+        return _guid_preview_payload(preview)
+
+    def replace_guid_mark(
+        self,
+        draft_id: str,
+        *,
+        product_kind: str,
+        mark: str,
+        target_mark: str,
+    ) -> dict[str, Any]:
+        """Заменяет все строки марки в черновике. Очередь и обещание не трогает."""
+        payload = self._wf._load_draft_or_raise(draft_id)
+        order, indexes, target, discount, _logistics, metadata = self._prepare_guid_mark(
+            draft_id,
+            product_kind=product_kind,
+            mark=mark,
+            target_mark=target_mark,
+            payload=payload,
+        )
+        from core.guid_replace import build_replacement
+
+        pb = self._pb_db_path()
+        for index in indexes:
+            built = build_replacement(
+                order[index],
+                target,
+                discount,
+                product_kind,
+                actor="manager",
+                pb_db_path=pb,
+            )
+            built["source_text"] = target.mark
+            qty = int(built.get("qty") or 0)
+            if built.get("discounted_price") is not None:
+                built["line_total"] = float(built["discounted_price"]) * qty
+            order[index] = built
+        _invalidate_breakdown(metadata)
+        self.persist_order_and_metadata(
+            draft_id,
+            payload=payload,
+            order_data=order,
+            metadata=metadata,
+        )
+        return self.get_draft_details(draft_id)
+
+    def _prepare_guid_mark(
+        self,
+        draft_id: str,
+        *,
+        product_kind: str,
+        mark: str,
+        target_mark: str,
+        payload: dict[str, Any] | None = None,
+    ) -> tuple[list[dict[str, Any]], list[int], Any, float, float, dict[str, Any]]:
+        from app.services.guid_replace_service import GuidReplaceService
+        from core.guid_replace import GuidReplaceError, ReplaceTarget, _line_mark
+
+        kind = str(product_kind or "").strip()
+        source = str(mark or "").strip()
+        chosen = str(target_mark or "").strip()
+        if not kind or not source or not chosen:
+            raise GuidReplaceError("Нужны вид, марка и выбранная марка.")
+        loaded = payload if payload is not None else self._wf._load_draft_or_raise(draft_id)
+        metadata = dict(loaded.get("metadata") or {})
+        order = [
+            dict(line)
+            for line in list(loaded.get("order_data") or [])
+            if isinstance(line, dict)
+        ]
+        indexes = [
+            index
+            for index, line in enumerate(order)
+            if _line_mark(line, kind) == source
+        ]
+        if not indexes:
+            raise GuidReplaceError(f"В составе нет марки «{source}».")
+        for index in indexes:
+            if str(order[index].get("price_source") or "").strip() == "oneoff":
+                raise GuidReplaceError("Договорную цену менеджер заменить не может.")
+        helper = GuidReplaceService(self._pb_db_path(), self._pb_db_path())
+        if helper._guid_count(kind, chosen) != 1:
+            raise GuidReplaceError("Заменить можно только карточку с одним номером.")
+        guid = helper._fill_single_guid(kind, chosen, None)
+        discount = float(metadata.get("discount_percent") or 0.0)
+        logistics = float(metadata.get("logistics_cost") or 0.0)
+        return order, indexes, ReplaceTarget(chosen, guid), discount, logistics, metadata
+
+    @staticmethod
+    def _pb_db_path() -> str:
+        from app.core.settings import get_settings
+
+        return str(get_settings().pb_db_path)
 
     def restore_order_lines(
         self,
@@ -930,6 +1079,14 @@ class CommercialDraftLifecycle:
             replace_existing=replace_existing,
         )
 
+    def _sync_guid_queue(self) -> None:
+        """Очередь «Завести в 1С» следует за составом КП (после записи КП, не бросает)."""
+        from app.core.settings import get_settings
+
+        sync_guid_queue_with_kp(
+            get_settings().pb_db_path, self._wf.kp_repository.db_path
+        )
+
     def save_offer(
         self,
         draft_id: str,
@@ -938,6 +1095,7 @@ class CommercialDraftLifecycle:
         status: str = "в работе",
         save_mode: str = "database",
         plate_order_ctx: PlateOrderContext | None = None,
+        changed_by: str | None = None,
     ) -> dict[str, Any]:
         payload = self._wf._load_draft_or_raise(draft_id)
         metadata = dict(payload.get("metadata", {}))
@@ -999,6 +1157,7 @@ class CommercialDraftLifecycle:
                 execution_terms=execution_terms,
                 xlsx_path=None,
                 product_type=product_type,
+                changed_by=changed_by,
             )
             recalc_promise_after_edit(str(self._wf.kp_repository.db_path), int(kp_id))
             # Keep archived status on update; do not flip to default «в работе».
@@ -1064,6 +1223,7 @@ class CommercialDraftLifecycle:
                 logger.exception(
                     "Не удалось уведомить экономистов о GUID для КП №%s", kp_id
                 )
+        self._sync_guid_queue()
         saved_offer = {
             "kp_id": kp_id,
             "status": persist_status,
@@ -1152,6 +1312,7 @@ class CommercialDraftLifecycle:
         mode: str,
         execution_terms_input: str = "",
         plate_order_ctx: PlateOrderContext | None = None,
+        changed_by: str | None = None,
     ) -> dict[str, Any]:
         normalized_mode = mode.strip().lower()
         if normalized_mode == "database":
@@ -1162,6 +1323,7 @@ class CommercialDraftLifecycle:
                 status="в работе",
                 save_mode="database",
                 plate_order_ctx=plate_order_ctx,
+                changed_by=changed_by,
             )
         if normalized_mode == "archive":
             raw = (execution_terms_input or "").strip()
@@ -1172,6 +1334,7 @@ class CommercialDraftLifecycle:
                 status="в архиве",
                 save_mode="archive",
                 plate_order_ctx=plate_order_ctx,
+                changed_by=changed_by,
             )
         if normalized_mode == "skip":
             details = self.get_draft_details(draft_id)

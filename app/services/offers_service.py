@@ -17,6 +17,7 @@ from app.services.counterparties_service import (
     CounterpartiesService,
     CounterpartyValidationError,
 )
+from app.services.guid_queue_sync import sync_guid_queue_with_kp
 from app.services.promise_service import PromiseGateError, PromiseService
 from core.kp_persistence_service import KpPersistenceService
 from core.execution_terms import parse_execution_terms
@@ -246,6 +247,14 @@ class OffersService:
             logger.exception(
                 "Не удалось уведомить экономистов о GUID для КП №%s", kp_id
             )
+        self._sync_guid_queue()
+
+    def _sync_guid_queue(self) -> None:
+        from app.core.settings import get_settings
+
+        sync_guid_queue_with_kp(
+            get_settings().pb_db_path, self.kp_repository.db_path
+        )
 
     def _parse_execution_terms(self, raw_terms: str) -> tuple[str, bool]:
         return parse_execution_terms(raw_terms, policy="default_if_empty")

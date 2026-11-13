@@ -226,6 +226,14 @@ export type ArchiveOfferDetails = {
   invoice_warehouse?: string | null;
   specification_saved?: boolean;
   specification_stale_custom?: boolean;
+  mark_changes?: MarkChangeNote[];
+};
+
+export type MarkChangeNote = {
+  mark_old: string;
+  mark_new: string;
+  changed_at: string;
+  changed_by?: string | null;
 };
 
 export type SpecificationPaymentKind =

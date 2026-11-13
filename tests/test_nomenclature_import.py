@@ -26,6 +26,7 @@ from core.guid_gate import (
     HINT_CREATE_U,
     MissingItem,
     OrderLine,
+    REASON_DUP,
     REASON_MISSING,
     REASON_MISSING_U,
 )
@@ -665,3 +666,188 @@ def test_partial_price_door_does_not_mark_other_catalog_rows_disappeared(tmp_pat
     assert leftover is not None
     assert leftover.guid_1c == GUID_B
     assert GUID_XLSX not in _open_price_guids(db)
+
+
+PLATE_NAME = "Плиты ПБ 13-2,6-8п"
+PLATE_GUID = "77f52518-df3a-11f1-900b-04d9f5387845"
+PLATE_NEIGHBOR = "Плиты ПБ 22,5-2,6-8п"
+PLATE_NEIGHBOR_GUID = "44444444-4444-4444-4444-444444444444"
+_PLATE_XLS = Path(__file__).parent / "fixtures" / "nomenclature" / "plates-two.xls"
+
+
+def _plate_rows(db: Path) -> list[tuple[str, str]]:
+    conn = sqlite3.connect(db)
+    try:
+        tables = {row[0] for row in conn.execute("SELECT name FROM sqlite_master WHERE type='table'")}
+        if "prays_plity" not in tables:
+            return []
+        return conn.execute(
+            'SELECT "Уникальный идентификатор (Номенклатура)", "Товар" '
+            "FROM prays_plity ORDER BY 1"
+        ).fetchall()
+    finally:
+        conn.close()
+
+
+def _seed_plate(db: Path, guid: str, name: str) -> None:
+    conn = sqlite3.connect(db)
+    try:
+        conn.execute(
+            'CREATE TABLE IF NOT EXISTS prays_plity ('
+            '"Уникальный идентификатор (Номенклатура)" TEXT, '
+            '"Товар" TEXT)'
+        )
+        conn.execute(
+            'INSERT INTO prays_plity ("Уникальный идентификатор (Номенклатура)", "Товар") '
+            "VALUES (?, ?)",
+            (guid, name),
+        )
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def _table_names(db: Path) -> set[str]:
+    conn = sqlite3.connect(db)
+    try:
+        return {row[0] for row in conn.execute("SELECT name FROM sqlite_master WHERE type='table'")}
+    finally:
+        conn.close()
+
+
+def test_xlsx_plate_file_writes_prays_plity(tmp_path: Path) -> None:
+    db = tmp_path / "pb.db"
+    _seed_plate(db, PLATE_NEIGHBOR_GUID, PLATE_NEIGHBOR)
+    xlsx = _xlsx(tmp_path / "report.xlsx", with_filter=True, name=PLATE_NAME, guid=PLATE_GUID)
+    result = NomenclatureImportService(db).import_file(xlsx.read_bytes(), "Плиты ПБ 13-2_6-8п.xlsx")
+
+    assert result.product_kind == "plate"
+    assert result.mode == "partial"
+    assert result.new_guids_count == 1
+    assert result.disappeared_count == 0
+    assert result.weights_updated == 0
+    assert result.ambiguous_count == 0
+    assert result.unmatched_1c_count == 0
+    assert result.waiting_price == 0
+    assert _plate_rows(db) == [
+        (PLATE_NEIGHBOR_GUID, PLATE_NEIGHBOR),
+        (PLATE_GUID, PLATE_NAME),
+    ]
+    assert "nomenclature_guid" not in _table_names(db)
+    assert "product_weight_catalog" not in _table_names(db)
+
+
+def test_xlsx_plate_names_without_plate_filename_still_write_prays(tmp_path: Path) -> None:
+    db = tmp_path / "pb.db"
+    xlsx = _xlsx(tmp_path / "report.xlsx", with_filter=True, name=PLATE_NAME, guid=PLATE_GUID)
+    result = NomenclatureImportService(db).import_file(xlsx.read_bytes(), "Номенклатура с УИД.xlsx")
+
+    assert result.product_kind == "plate"
+    assert result.new_guids_count == 1
+    assert _plate_rows(db) == [(PLATE_GUID, PLATE_NAME)]
+
+
+def test_xlsx_plate_file_resolves_open_demand(tmp_path: Path) -> None:
+    db = tmp_path / "pb.db"
+    conn = sqlite3.connect(db)
+    try:
+        record_guid_demand(conn, 13, [_demand_item("plate", PLATE_NAME)])
+        conn.commit()
+    finally:
+        conn.close()
+    xlsx = _xlsx(tmp_path / "report.xlsx", with_filter=True, name=PLATE_NAME, guid=PLATE_GUID)
+
+    NomenclatureImportService(db).import_file(xlsx.read_bytes(), "Плиты ПБ 13-2_6-8п.xlsx")
+
+    conn = sqlite3.connect(db)
+    try:
+        state = conn.execute(
+            "SELECT state FROM guid_demand WHERE product_kind = ? AND mark = ? AND field = ?",
+            ("plate", PLATE_NAME, FIELD_GUID),
+        ).fetchone()
+        open_rows = list_guid_demand(conn)
+    finally:
+        conn.close()
+    assert state == (STATE_RESOLVED,)
+    assert open_rows == []
+
+
+def test_xlsx_two_guids_for_one_plate_stay_open_as_duplicate(tmp_path: Path) -> None:
+    db = tmp_path / "pb.db"
+    conn = sqlite3.connect(db)
+    try:
+        record_guid_demand(conn, 13, [_demand_item("plate", PLATE_NAME)])
+        conn.commit()
+    finally:
+        conn.close()
+    xlsx = _xlsx(
+        tmp_path / "report.xlsx",
+        with_filter=True,
+        name=PLATE_NAME,
+        guid=PLATE_GUID,
+        extra_names=[(PLATE_NAME, GUID_B)],
+    )
+
+    result = NomenclatureImportService(db).import_file(xlsx.read_bytes(), "Плиты ПБ 13-2_6-8п.xlsx")
+
+    assert result.new_guids_count == 2
+    assert result.ambiguous_count == 0
+    assert _plate_rows(db) == [(GUID_B, PLATE_NAME), (PLATE_GUID, PLATE_NAME)]
+    conn = sqlite3.connect(db)
+    try:
+        open_rows = list_guid_demand(conn)
+        plain = conn.execute(
+            "SELECT state FROM guid_demand WHERE product_kind = ? AND mark = ? AND field = ?",
+            ("plate", PLATE_NAME, FIELD_GUID),
+        ).fetchone()
+    finally:
+        conn.close()
+    assert plain == (STATE_RESOLVED,)
+    assert len(open_rows) == 1
+    assert open_rows[0].field == FIELD_DUPLICATE
+    assert open_rows[0].reason == REASON_DUP
+
+
+def test_xls_plate_file_keeps_rows_missing_from_file(tmp_path: Path) -> None:
+    db = tmp_path / "pb.db"
+    _seed_plate(db, PLATE_NEIGHBOR_GUID, PLATE_NEIGHBOR)
+    service = NomenclatureImportService(db)
+    payload = _PLATE_XLS.read_bytes()
+
+    first = service.import_file(payload, "Прайс плиты.xls")
+    second = service.import_file(payload, "Прайс плиты.xls")
+
+    assert first.mode == "full"
+    assert first.disappeared_count == 0
+    assert first.new_guids_count == 2
+    assert second.new_guids_count == 0
+    assert second.unchanged == 2
+    assert second.disappeared_count == 0
+    assert set(_plate_rows(db)) == {
+        (PLATE_NEIGHBOR_GUID, PLATE_NEIGHBOR),
+        (PLATE_GUID, PLATE_NAME),
+        ("33333333-3333-3333-3333-333333333333", "Плиты ПБ 17-2,6-10п"),
+    }
+    assert "nomenclature_guid" not in _table_names(db)
+
+
+def test_explicit_pile_kind_does_not_write_prays_plity(tmp_path: Path) -> None:
+    db = tmp_path / "pb.db"
+    _seed(db)
+    xlsx = _xlsx(tmp_path / "report.xlsx", with_filter=True)
+    result = NomenclatureImportService(db).import_file(
+        xlsx.read_bytes(),
+        "Плиты сваи.xlsx",
+        product_kind="pile",
+    )
+
+    assert result.product_kind == "pile"
+    assert result.new_guids_count == 1
+    assert _plate_rows(db) == []
+    conn = sqlite3.connect(db)
+    try:
+        stored = get_by_mark(conn, "pile", "С30.30-3")
+    finally:
+        conn.close()
+    assert stored is not None
+    assert stored.guid_1c == GUID_XLSX

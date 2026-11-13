@@ -105,13 +105,14 @@ export const DuplicatesSection = () => {
   const query = useGuidDuplicatesQuery();
   const items = query.data?.duplicates ?? [];
 
+  if (!query.isError && items.length === 0) {
+    return null;
+  }
+
   return (
     <section aria-label="Дубли GUID" style={{ display: "grid", gap: "0.85rem" }}>
       <h2 style={{ margin: 0, fontSize: "1.1rem" }}>Дубли GUID</h2>
       {query.isError ? <Alert tone="error">{getErrorMessage(query.error)}</Alert> : null}
-      {items.length === 0 && !query.isLoading ? (
-        <p style={{ margin: 0, color: "#667085" }}>дублей нет</p>
-      ) : null}
       {items.map((item) => (
         <DuplicateCard key={`${item.scope}-${item.product_kind}-${item.key}`} item={item} />
       ))}

@@ -28,6 +28,7 @@ from core.nomenclature_sync import (
     infer_product_kind_from_names,
     sync_pricelist,
 )
+from core.plate_card_import import PlateCardReport, apply_plate_cards
 from core.price_import_queue import extract_mark_for_kind
 from core.price_queue_db import ensure_schema as ensure_price_queue_schema
 from core.price_queue_db import upsert_unmatched
@@ -89,7 +90,6 @@ class NomenclatureImportService:
         if not file_bytes:
             raise NomenclatureImportError(_MSG_EMPTY)
         safe_name = _safe_upload_name(filename)
-        kind = resolve_import_product_kind(safe_name, product_kind)
         with tempfile.TemporaryDirectory(prefix="nomenclature-1c-") as tmp:
             path = Path(tmp) / safe_name
             path.write_bytes(file_bytes)
@@ -99,6 +99,9 @@ class NomenclatureImportService:
                 raise
             except ValueError as exc:
                 raise NomenclatureImportError(str(exc)) from exc
+        if _is_plate_import(safe_name, product_kind, [row.name for row in rows]):
+            return self._import_plates(rows, partial=False)
+        kind = resolve_import_product_kind(safe_name, product_kind)
         return self._sync_and_commit(rows, kind, partial=False)
 
     def import_xlsx(
@@ -120,7 +123,10 @@ class NomenclatureImportService:
             except ValueError as exc:
                 raise NomenclatureImportError(str(exc)) from exc
         rows = _pricelist_from_universal(report)
-        kind = _resolve_xlsx_kind(safe_name, product_kind, [row.name for row in report.rows])
+        names = [row.name for row in report.rows]
+        if _is_plate_import(safe_name, product_kind, names):
+            return self._import_plates(rows, partial=report.partial)
+        kind = _resolve_xlsx_kind(safe_name, product_kind, names)
         weights_updated, _skipped = _apply_xlsx_weights(
             self._weight_catalog_path(),
             report.rows,
@@ -162,6 +168,23 @@ class NomenclatureImportService:
         mode = "partial" if partial else "full"
         return _report_to_response(report, kind, mode=mode, weights_updated=weights_updated)
 
+    def _import_plates(
+        self,
+        rows: Sequence[PricelistRow],
+        *,
+        partial: bool,
+    ) -> Import1cResponse:
+        conn = sqlite3.connect(str(self._pb_db_path()))
+        try:
+            report = apply_plate_cards(conn, rows)
+            conn.commit()
+            sweep_guid_demand(conn)
+            conn.commit()
+        finally:
+            conn.close()
+        mode = "partial" if partial else "full"
+        return _report_to_response(_plates_as_sync_report(report), "plate", mode=mode)
+
     def _pb_db_path(self) -> Path:
         if self._db_path is not None:
             return self._db_path
@@ -179,10 +202,12 @@ def resolve_import_product_kind(
     filename: str | None,
     product_kind: str | None,
 ) -> str:
-    """Явный kind или та же эвристика, что в core.nomenclature_sync.infer_product_kind.
+    """Явный вид не-плит или та же эвристика, что в core.nomenclature_sync.infer_product_kind.
 
     Имя файла: сваи → pile, мостовые → bridge_pile, блоки → fbs.
-    Плиты, составные и смешанный ЛМ без явного product_kind — ошибка.
+    Плиты забирает _is_plate_import до этого вызова. Прямой вызов с видом плиты
+    по-прежнему ошибка: в nomenclature_guid они не пишутся.
+    Составные и смешанный ЛМ без явного product_kind — ошибка.
     """
     explicit = (product_kind or "").strip()
     if explicit:
@@ -203,6 +228,44 @@ def resolve_import_product_kind(
     raise NomenclatureImportError(
         f"Не удалось определить группу изделий по имени файла{suffix}. "
         f"Передайте параметр product_kind ({_KIND_LIST})."
+    )
+
+
+def _is_plate_import(
+    filename: str | None,
+    product_kind: str | None,
+    names: Sequence[str],
+) -> bool:
+    """Плиты пишутся в prays_plity. Явный вид из PRODUCT_KINDS эту ветку не включает."""
+    explicit = (product_kind or "").strip().lower()
+    if explicit:
+        return explicit in _PLATE_ALIASES
+    if _filename_says_plates(filename):
+        return True
+    return infer_product_kind_from_names(names) in _PLATE_ALIASES
+
+
+def _filename_says_plates(filename: str | None) -> bool:
+    name = Path(filename).name.lower() if filename else ""
+    return "плит" in name
+
+
+def _plates_as_sync_report(report: PlateCardReport) -> SyncReport:
+    def writes(items: Sequence[object]) -> tuple[GuidWrite, ...]:
+        return tuple(
+            GuidWrite(
+                product_kind="plate",
+                mark=str(item.name),
+                field="guid_1c",
+                guid=str(item.guid),
+            )
+            for item in items
+        )
+
+    return SyncReport(
+        new_guids=writes(report.new_guids),
+        updated_guids=writes(report.updated_guids),
+        unchanged=report.unchanged,
     )
 
 

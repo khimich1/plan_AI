@@ -1,5 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { httpClient } from "@/shared/api/httpClient";
+import { pricesQueueHref } from "@/shared/lib/pricesScreen";
 
 const BASE = "/api/v1/notifications";
 
@@ -90,7 +91,7 @@ export function formatNotificationTitle(item: NotificationItem): string {
 
 export function hrefForNotification(item: NotificationItem): string | null {
   if (item.kind === "kp_guid_missing") {
-    return "/prices";
+    return pricesQueueHref();
   }
   const kpId = item.payload.kp_id;
   return typeof kpId === "number" && kpId > 0 ? `/archive?kp=${kpId}` : null;

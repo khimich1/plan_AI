@@ -217,6 +217,27 @@ def _set_resolved(conn: sqlite3.Connection, row: GuidDemandRow) -> None:
     )
 
 
+def set_kp_ids(
+    conn: sqlite3.Connection,
+    row: GuidDemandRow,
+    kp_ids: Sequence[int],
+) -> None:
+    """Заменить список КП строки (сверка с КП); состояние не трогает."""
+    conn.execute(
+        """
+        UPDATE guid_demand
+        SET kp_ids_json = ?
+        WHERE product_kind = ? AND mark = ? AND field = ?
+        """,
+        (json.dumps([int(kp_id) for kp_id in kp_ids]), row.product_kind, row.mark, row.field),
+    )
+
+
+def set_resolved(conn: sqlite3.Connection, row: GuidDemandRow) -> None:
+    """Закрыть строку (state resolved), не удаляя."""
+    _set_resolved(conn, row)
+
+
 def record_guid_demand(
     conn: sqlite3.Connection,
     kp_id: int,
@@ -270,7 +291,19 @@ def sweep_guid_demand(conn: sqlite3.Connection) -> None:
             continue
         item = report.missing[0]
         new_field = field_for_reason(item.reason)
+        reason = str(item.reason or "").strip()
+        hint = str(item.action_hint or "").strip()
         if new_field == row.field:
+            if (reason, hint) != (row.reason, row.hint):
+                _upsert_open(
+                    conn,
+                    product_kind=row.product_kind,
+                    mark=row.mark,
+                    field=row.field,
+                    reason=reason,
+                    hint=hint,
+                    extra_kp_ids=(),
+                )
             continue
         _set_resolved(conn, row)
         _upsert_open(
@@ -278,8 +311,8 @@ def sweep_guid_demand(conn: sqlite3.Connection) -> None:
             product_kind=row.product_kind,
             mark=row.mark,
             field=new_field,
-            reason=str(item.reason or "").strip(),
-            hint=str(item.action_hint or "").strip(),
+            reason=reason,
+            hint=hint,
             extra_kp_ids=row.kp_ids,
         )
 
@@ -297,5 +330,7 @@ __all__ = [
     "field_for_reason",
     "list_open",
     "record_guid_demand",
+    "set_kp_ids",
+    "set_resolved",
     "sweep_guid_demand",
 ]

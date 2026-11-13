@@ -5,7 +5,9 @@
 from __future__ import annotations
 
 import os
+import re
 import sqlite3
+from dataclasses import dataclass
 from typing import Dict, List, Optional, Tuple
 
 _PB_DB_PATH = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "pb.db")
@@ -24,44 +26,168 @@ def _extract_length_dm_val(name: str) -> Optional[float]:
         return None
 
 
-def _fetch_plate_row(pb_cur: sqlite3.Cursor, where_sql: str, param: str):
-    pb_cur.execute(
-        'SELECT "Уникальный идентификатор (Номенклатура)", "Товар" '
-        f"FROM prays_plity WHERE {where_sql} "
-        'ORDER BY "Уникальный идентификатор (Номенклатура)"',  # name dupes: smallest 1C GUID
-        (param,),
-    )
-    return pb_cur.fetchone()
+PLATE_FOUND = "found"
+PLATE_DUP = "dup"
+PLATE_VARIANTS = "variants"
+PLATE_NONE = "none"
+
+_LOAD_SUFFIX_RE = re.compile(
+    r"^(?P<body>.*-)(?P<load>\d+(?:[.,]\d+)?)п\s*$",
+    re.IGNORECASE,
+)
+_NAME_COLUMN = '"Товар"'
+_GUID_COLUMN = '"Уникальный идентификатор (Номенклатура)"'
 
 
-def _count_plate_guids(pb_cur: sqlite3.Cursor, where_sql: str, param: str) -> int:
+@dataclass(frozen=True)
+class PlateCardMatch:
+    """Результат разбора плиты по prays_plity.
+
+    status: found (один GUID), dup (одно имя, несколько GUID),
+    variants (LIKE дал несколько разных карточек, сам не выбирает), none.
+    guid при dup — наименьший (стабильный для lookup); выбор делает человек.
+    """
+
+    status: str
+    canonical_name: Optional[str] = None
+    guid: Optional[str] = None
+    guid_count: int = 0
+    candidates: Tuple[str, ...] = ()
+    match_type: Optional[str] = None
+
+
+def plate_load_12_alias(plate_name: str) -> Optional[str]:
+    """Хвост нагрузки 12 или 12,5 в любом написании → имя с хвостом «12,5п».
+
+    Уже «12,5п» и любая другая нагрузка возвращают None.
+    Спека: ai_docs/specs/plate-load-12-guid-alias.md, D-load12.
+    """
+    text = str(plate_name or "").strip()
+    match = _LOAD_SUFFIX_RE.match(text)
+    if not match:
+        return None
+    try:
+        value = float(match.group("load").replace(",", "."))
+    except ValueError:
+        return None
+    if abs(value - 12.0) > 1e-6 and abs(value - 12.5) > 1e-6:
+        return None
+    alias = f"{match.group('body')}12,5п"
+    if alias == text:
+        return None
+    return alias
+
+
+def load_class_from_plate_name(name: str) -> Optional[int]:
+    """Нагрузка из имени карточки плиты: «…12,5п» → 1250, «…12п» → 1200, «…8п» → 800.
+
+    Нет хвоста «…п» (в т. ч. особая карточка «…12п Пв-7.1») → None.
+    Не parse_load_code_from_name: тот округляет 12,5 до 13.
+    """
+    match = _LOAD_SUFFIX_RE.match(str(name or "").strip())
+    if not match:
+        return None
+    try:
+        value = float(match.group("load").replace(",", "."))
+    except ValueError:
+        return None
+    return int(round(value * 100))
+
+
+def _select_cards(pb_cur: sqlite3.Cursor, where_sql: str, param: str) -> List[Tuple[str, str]]:
     pb_cur.execute(
-        'SELECT COUNT(DISTINCT "Уникальный идентификатор (Номенклатура)") '
-        f"FROM prays_plity WHERE {where_sql}",
+        f"SELECT {_GUID_COLUMN}, {_NAME_COLUMN} FROM prays_plity WHERE {where_sql} "
+        f"ORDER BY {_GUID_COLUMN}",  # name dupes: smallest 1C GUID
         (param,),
     )
-    row = pb_cur.fetchone()
-    return int(row[0]) if row and row[0] is not None else 0
+    return pb_cur.fetchall()
+
+
+def _card_match(rows: List[Tuple[str, str]], match_type: str) -> PlateCardMatch:
+    guid_count = len({row[0] for row in rows})
+    return PlateCardMatch(
+        status=PLATE_FOUND if guid_count == 1 else PLATE_DUP,
+        canonical_name=rows[0][1],
+        guid=rows[0][0],
+        guid_count=guid_count,
+        match_type=match_type,
+    )
+
+
+def _match_exact_or_variant(
+    pb_cur: sqlite3.Cursor,
+    name: str,
+    exact_type: str,
+    variant_type: str,
+) -> Optional[PlateCardMatch]:
+    from core.config_and_data import plate_name_to_prays_variants
+
+    attempts = [(name, exact_type)]
+    attempts += [(variant, variant_type) for variant in plate_name_to_prays_variants(name)]
+    for candidate, match_type in attempts:
+        rows = _select_cards(pb_cur, f"{_NAME_COLUMN} = ? COLLATE NOCASE", candidate)
+        if rows:
+            return _card_match(rows, match_type)
+    return None
+
+
+def _length_matches(req_len_val: Optional[float], card_name: str) -> bool:
+    can_len_val = _extract_length_dm_val(card_name)
+    if req_len_val is None or can_len_val is None:
+        return True
+    return abs(req_len_val - can_len_val) <= 0.05
+
+
+def _match_like(pb_cur: sqlite3.Cursor, plate_name: str) -> PlateCardMatch:
+    normalized = plate_name.replace("Плиты ", "").replace("Плита ", "")
+    if not normalized.strip():
+        return PlateCardMatch(status=PLATE_NONE)
+    req_len_val = _extract_length_dm_val(plate_name)
+    rows = [
+        row
+        for row in _select_cards(pb_cur, f"{_NAME_COLUMN} LIKE ?", f"%{normalized}%")
+        if _length_matches(req_len_val, row[1])
+    ]
+    names = sorted({row[1] for row in rows})
+    if not names:
+        return PlateCardMatch(status=PLATE_NONE)
+    if len(names) > 1:
+        return PlateCardMatch(status=PLATE_VARIANTS, candidates=tuple(names))
+    return _card_match([row for row in rows if row[1] == names[0]], "like")
+
+
+def find_plate_card(pb_cur: sqlite3.Cursor, plate_name: str) -> PlateCardMatch:
+    """Единый разбор карточки плиты (D-load12).
+
+    Порядок: точное имя → варианты длины/ширины → «12 → 12,5п» (точное имя и те же
+    варианты) → LIKE. LIKE с несколькими карточками сам не выбирает (variants).
+    Правило одностороннее: набрано 12,5п — на 12п не откатываемся.
+    """
+    name = str(plate_name or "")
+    found = _match_exact_or_variant(pb_cur, name, "exact", "exact_prays_variant")
+    if found is not None:
+        return found
+    alias = plate_load_12_alias(name)
+    if alias is not None:
+        found = _match_exact_or_variant(
+            pb_cur, alias, "load12_alias", "load12_alias_prays_variant"
+        )
+        if found is not None:
+            return found
+    return _match_like(pb_cur, name)
 
 
 def count_nomenclature_by_plate_name(
     plate_name: str,
     pb_cur: sqlite3.Cursor,
 ) -> int:
-    """Число различных GUID в prays_plity по тому же пути, что lookup (exact/variant).
+    """Число различных GUID карточки, найденной тем же правилом, что lookup.
 
     count > 1 — дубль 1С: без plate_guid_choice резолвер должен вернуть missing.
     """
-    n = _count_plate_guids(pb_cur, '"Товар" = ? COLLATE NOCASE', plate_name)
-    if n:
-        return n
-
-    from core.config_and_data import plate_name_to_prays_variants
-
-    for prays_variant in plate_name_to_prays_variants(plate_name):
-        n = _count_plate_guids(pb_cur, '"Товар" = ? COLLATE NOCASE', prays_variant)
-        if n:
-            return n
+    match = find_plate_card(pb_cur, plate_name)
+    if match.status in (PLATE_FOUND, PLATE_DUP):
+        return match.guid_count
     return 0
 
 
@@ -72,30 +198,12 @@ def lookup_nomenclature_by_plate_name(
     """Ищет запись в prays_plity по имени плиты.
 
     Возвращает (canonical_name, nomenclature_id, match_type).
-    match_type: "exact" | "like" | None (не найдено).
+    match_type: "exact" | "exact_prays_variant" | "load12_alias" |
+    "load12_alias_prays_variant" | "like" | None (не найдено или несколько карточек).
     """
-    row = _fetch_plate_row(pb_cur, '"Товар" = ? COLLATE NOCASE', plate_name)
-    if row:
-        return row[1], row[0], "exact"
-
-    from core.config_and_data import plate_name_to_prays_variants
-
-    for prays_variant in plate_name_to_prays_variants(plate_name):
-        row = _fetch_plate_row(pb_cur, '"Товар" = ? COLLATE NOCASE', prays_variant)
-        if row:
-            return row[1], row[0], "exact_prays_variant"
-
-    req_len_val = _extract_length_dm_val(plate_name)
-    normalized = plate_name.replace("Плиты ", "").replace("Плита ", "")
-    row = _fetch_plate_row(pb_cur, '"Товар" LIKE ?', f"%{normalized}%")
-    if row:
-        can_len_val = _extract_length_dm_val(row[1])
-        if req_len_val is not None and can_len_val is not None:
-            if abs(req_len_val - can_len_val) > 0.05:
-                row = None
-    if row:
-        return row[1], row[0], "like"
-
+    match = find_plate_card(pb_cur, plate_name)
+    if match.status in (PLATE_FOUND, PLATE_DUP):
+        return match.canonical_name, match.guid, match.match_type
     return None, None, None
 
 
@@ -160,6 +268,9 @@ def enrich_order_data_with_nomenclature(order_data: List[Dict]) -> List[Dict]:
             if canonical_name is not None:
                 item["name"] = canonical_name
                 item["nomenclature_id"] = nomenclature_id
+                card_load_class = load_class_from_plate_name(canonical_name)
+                if card_load_class is not None and canonical_name != original_name:
+                    item["load_class"] = card_load_class
             else:
                 item["nomenclature_id"] = None
 
@@ -172,8 +283,16 @@ def enrich_order_data_with_nomenclature(order_data: List[Dict]) -> List[Dict]:
 
 
 __all__ = [
+    "PLATE_DUP",
+    "PLATE_FOUND",
+    "PLATE_NONE",
+    "PLATE_VARIANTS",
+    "PlateCardMatch",
     "count_nomenclature_by_plate_name",
     "enrich_order_data_with_nomenclature",
     "fill_plate_nomenclature_cache",
+    "find_plate_card",
+    "load_class_from_plate_name",
     "lookup_nomenclature_by_plate_name",
+    "plate_load_12_alias",
 ]

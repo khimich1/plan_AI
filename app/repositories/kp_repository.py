@@ -99,6 +99,9 @@ class KpRepository:
         fbs_lm_delivery_enabled: bool | None = None,
         long_pile_delivery_enabled: bool | None = None,
         long_pile_delivery: dict | None = None,
+        _external_conn: sqlite3.Connection | None = None,
+        changed_by: str | None = None,
+        history_source: str = "edit",
     ) -> int:
         """Append/update existing KP by ``line_id`` (same ``kp_id``)."""
         return offers_write.update_kp_from_order_data(
@@ -119,6 +122,9 @@ class KpRepository:
             fbs_lm_delivery_enabled=fbs_lm_delivery_enabled,
             long_pile_delivery_enabled=long_pile_delivery_enabled,
             long_pile_delivery=long_pile_delivery,
+            _external_conn=_external_conn,
+            changed_by=changed_by,
+            history_source=history_source,
         )
 
     def list_offers_grouped(self, **list_filters) -> dict[str, list[dict]]:

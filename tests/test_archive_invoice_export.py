@@ -294,9 +294,16 @@ def test_invoice_delivery_share_is_not_discounted() -> None:
     assert len(goods) == 1
     assert "доставк" not in goods[0]["Номенклатура"].lower()
     assert goods[0]["Цена"] == 23643.0
-    assert goods[0]["ПроцентСкидки"] == 10.0
+    assert goods[0]["ПроцентСкидки"] == 6.83
+    assert document["ПроцентСкидки"] == 6.83
+    assert goods[0]["СуммаСкидки"] == 3228.60
     assert goods[0]["СуммаДоставки"] == 1500.0
-    assert undiscounted["Товары"][0]["СуммаДоставки"] == 1500.0
+    zero = undiscounted["Товары"][0]
+    assert zero["СуммаДоставки"] == 1500.0
+    assert zero["ПроцентСкидки"] == -3.17
+    assert zero["СуммаСкидки"] == -1500.0
+    assert undiscounted["ПроцентСкидки"] == -3.17
+    assert undiscounted["СуммаСкидки"] == -1500.0
     assert document["Самовывоз"] is False
     assert document["Склад"] == "Склад Готовой Продукции"
     payable = _payable("23643", "10", 2, "1500")
@@ -309,6 +316,55 @@ def test_invoice_delivery_share_is_not_discounted() -> None:
     assert document["СуммаНДС"] == float(vat)
     assert document["СуммаНДС"] != 1.23
     assert digest == other_digest
+
+
+def test_invoice_markup_5_matches_loaded_exchange_file() -> None:
+    """Эталон 2: цена, процент, суммы, НДС и доставка как в заказе 481."""
+    from core.invoice_export import build_invoice_document
+
+    fixture = json.loads(
+        (Path(__file__).resolve().parents[1] / "data/exchange_export/new_211_markup_5.json").read_text(
+            encoding="utf-8"
+        )
+    )
+    goods_fixture = fixture["Товары"]
+    document, _digest = build_invoice_document(
+        _offer(
+            kp_id=211,
+            date="2026-11-09",
+            manager="Александр",
+            discount_percent=5.0,
+            counterparty=fixture["Контрагент"] | {"name": fixture["Клиент"]},
+            lines=[
+                {
+                    "name": goods_fixture[0]["Номенклатура"],
+                    "qty": 200,
+                    "price": "8949.283209360001",
+                    "discount_percent": 5.0,
+                    "guid": goods_fixture[0]["GUID"],
+                },
+                {
+                    "name": goods_fixture[1]["Номенклатура"],
+                    "qty": 30,
+                    "price": "13312.012003200003",
+                    "discount_percent": 5.0,
+                    "guid": goods_fixture[1]["GUID"],
+                },
+            ],
+        ),
+        action="create",
+        warehouse="Склад Готовой Продукции",
+        line_delivery_kopecks=[14_608_710, 2_191_290],
+    )
+
+    assert document["ПроцентСкидки"] == fixture["ПроцентСкидки"]
+    assert document["СуммаСкидки"] == fixture["СуммаСкидки"]
+    assert document["СуммаНДС"] == fixture["СуммаНДС"]
+    assert document["СуммаДокумента"] == fixture["СуммаДокумента"]
+    assert document["Самовывоз"] is False
+    for built, expected in zip(document["Товары"], goods_fixture):
+        for key in ("Цена", "ПроцентСкидки", "СуммаСкидки", "Сумма", "СуммаНДС", "СуммаСНДС", "СуммаДоставки"):
+            assert built[key] == expected[key]
 
 
 def test_invoice_snapshot_hash_changes_when_qty_changes() -> None:
@@ -815,7 +871,8 @@ def test_invoice_export_delivery_share_is_after_discount(
     assert len(goods) == 1
     assert "доставк" not in goods[0]["Номенклатура"].lower()
     assert goods[0]["Цена"] == 15421.0
-    assert goods[0]["ПроцентСкидки"] == 10.0
+    assert goods[0]["ПроцентСкидки"] == 6.76
+    assert payload["ПроцентСкидки"] == 6.76
     assert goods[0]["СуммаДоставки"] == 1000.01
     assert payload["Самовывоз"] is False
     payable = _payable("15421", "10", 2, "1000.01")
